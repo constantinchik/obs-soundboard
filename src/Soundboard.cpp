@@ -112,6 +112,11 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	addAction(renameMedia);
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
+
+	// Initialize system audio player
+	systemAudioPlayer = new QMediaPlayer(this);
+	systemAudioOutput = new QAudioOutput(this);
+	systemAudioPlayer->setAudioOutput(systemAudioOutput);
 }
 
 Soundboard::~Soundboard()
@@ -151,6 +156,21 @@ void Soundboard::createSource()
 		obs_source_set_hidden(source, true);
 
 		ui->mediaControls->SetSource(source.Get());
+
+		// Connect to media signals to synchronize system audio player
+		auto mediaStopped = [](void *data, calldata_t *) {
+			Soundboard *sb = static_cast<Soundboard *>(data);
+			QMetaObject::invokeMethod(sb, &Soundboard::mediaSourceStopped);
+		};
+		auto mediaPaused = [](void *data, calldata_t *) {
+			Soundboard *sb = static_cast<Soundboard *>(data);
+			QMetaObject::invokeMethod(sb, &Soundboard::mediaSourcePaused);
+		};
+
+		obs_source_t *s = source.Get();
+		signal_handler_t *sh = obs_source_get_signal_handler(s);
+		signal_handler_connect(sh, "media_stopped", mediaStopped, this);
+		signal_handler_connect(sh, "media_pause", mediaPaused, this);
 	}
 
 	obs_set_output_source(63, source);
@@ -228,6 +248,7 @@ void Soundboard::save(OBSData saveData)
 		obs_data_set_string(saveData, "current_sound", QT_TO_UTF8(obj->getName()));
 
 	obs_data_set_bool(saveData, "use_countdown", ui->mediaControls->countDownTimer);
+	obs_data_set_bool(saveData, "system_audio_enabled", systemAudioEnabled);
 }
 
 void Soundboard::loadSource(OBSData saveData)
@@ -293,6 +314,9 @@ void Soundboard::load(OBSData saveData)
 
 	bool countdown = obs_data_get_bool(saveData, "use_countdown");
 	ui->mediaControls->countDownTimer = countdown;
+
+	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
+	ui->actionToggleSystemAudio->setChecked(systemAudioEnabled);
 }
 
 void Soundboard::clear()
@@ -300,6 +324,11 @@ void Soundboard::clear()
 	ui->mediaControls->countDownTimer = false;
 	ui->mediaControls->SetSource(nullptr);
 	source = nullptr;
+
+	// Stop system audio player
+	if (systemAudioPlayer) {
+		systemAudioPlayer->stop();
+	}
 
 	prevPath = "";
 
@@ -323,6 +352,12 @@ void Soundboard::play(MediaObj *obj)
 
 	if (prevPath == path) {
 		obs_source_media_restart(source);
+
+		// Also restart system audio if enabled
+		if (systemAudioEnabled && systemAudioPlayer) {
+			systemAudioPlayer->stop();
+			systemAudioPlayer->play();
+		}
 		return;
 	}
 
@@ -337,6 +372,14 @@ void Soundboard::play(MediaObj *obj)
 	obs_source_update(source, settings);
 
 	ui->list->setCurrentItem(item);
+
+	// Play through system audio if enabled
+	if (systemAudioEnabled && systemAudioPlayer) {
+		systemAudioPlayer->setSource(QUrl::fromLocalFile(path));
+		systemAudioPlayer->setLoops(obj->loopEnabled() ? QMediaPlayer::Infinite : 1);
+		systemAudioOutput->setVolume(obj->getVolume());
+		systemAudioPlayer->play();
+	}
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)
@@ -479,6 +522,16 @@ void Soundboard::on_actionDuplicate_triggered()
 	newObj->setLoopEnabled(loop);
 }
 
+void Soundboard::on_actionToggleSystemAudio_toggled(bool checked)
+{
+	systemAudioEnabled = checked;
+
+	// Stop system audio player if disabling
+	if (!checked && systemAudioPlayer) {
+		systemAudioPlayer->stop();
+	}
+}
+
 void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
 {
 	QListWidgetItem *item = ui->list->itemAt(pos);
@@ -516,6 +569,20 @@ void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
 	popup.addMenu(&subMenu);
 
 	popup.exec(QCursor::pos());
+}
+
+void Soundboard::mediaSourceStopped()
+{
+	if (systemAudioPlayer) {
+		systemAudioPlayer->stop();
+	}
+}
+
+void Soundboard::mediaSourcePaused()
+{
+	if (systemAudioPlayer) {
+		systemAudioPlayer->pause();
+	}
 }
 
 void Soundboard::dragEnterEvent(QDragEnterEvent *event)
