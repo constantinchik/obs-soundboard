@@ -64,13 +64,17 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 
 # Bundle Qt Multimedia framework and plugins for macOS
 if(APPLE AND ENABLE_QT)
-  # Get Qt installation prefix
-  get_target_property(QT6_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-  execute_process(
-    COMMAND "${QT6_QMAKE_EXECUTABLE}" -query QT_INSTALL_PREFIX
-    OUTPUT_VARIABLE QT_INSTALL_PREFIX
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
+  # Get Qt installation prefix from Qt6::Core target location
+  get_target_property(QT6_CORE_LOCATION Qt6::Core IMPORTED_LOCATION_RELWITHDEBINFO)
+  if(NOT QT6_CORE_LOCATION)
+    get_target_property(QT6_CORE_LOCATION Qt6::Core IMPORTED_LOCATION_RELEASE)
+  endif()
+  if(NOT QT6_CORE_LOCATION)
+    get_target_property(QT6_CORE_LOCATION Qt6::Core IMPORTED_LOCATION)
+  endif()
+
+  # Get Qt prefix: QtCore.framework is at <prefix>/lib/QtCore.framework/Versions/A/QtCore
+  get_filename_component(QT_INSTALL_PREFIX "${QT6_CORE_LOCATION}/../../../.." ABSOLUTE)
 
   set(QT6_MULTIMEDIA_FRAMEWORK "${QT_INSTALL_PREFIX}/lib/QtMultimedia.framework")
   set(QT6_MULTIMEDIA_PLUGINS_DIR "${QT_INSTALL_PREFIX}/plugins/multimedia")
