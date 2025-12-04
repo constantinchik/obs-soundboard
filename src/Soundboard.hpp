@@ -55,9 +55,6 @@ private slots:
 
 	void itemRenamed(MediaObj *obj);
 
-	void mediaSourceStopped();
-	void mediaSourcePaused();
-
 public:
 	Soundboard(QWidget *parent = nullptr);
 	~Soundboard();
@@ -73,6 +70,9 @@ public:
 	void createSource();
 	void connectSourceSignals();
 	void disconnectSourceSignals();
+
+	void mediaSourceStopped();
+	void mediaSourcePaused();
 
 protected:
 	virtual void dragEnterEvent(QDragEnterEvent *event) override;
