@@ -6,6 +6,8 @@
 
 #include <QPointer>
 #include <QStyledItemDelegate>
+#include <QMediaPlayer>
+#include <QAudioOutput>
 
 #include <memory>
 
@@ -28,6 +30,10 @@ private:
 	OBSSourceAutoRelease source;
 
 	bool actionsEnabled = false;
+	bool systemAudioEnabled = false;
+
+	QMediaPlayer *systemAudioPlayer = nullptr;
+	QAudioOutput *systemAudioOutput = nullptr;
 
 	QAction *renameMedia = nullptr;
 
@@ -36,6 +42,7 @@ private slots:
 	void on_actionAdd_triggered();
 	void on_actionRemove_triggered();
 	void on_actionEdit_triggered();
+	void on_actionToggleSystemAudio_toggled(bool checked);
 	void updateActions();
 	void on_list_customContextMenuRequested(const QPoint &pos);
 	void on_actionDuplicate_triggered();

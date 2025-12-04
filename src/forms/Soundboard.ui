@@ -87,6 +87,7 @@
         <addaction name="actionRemove"/>
         <addaction name="separator"/>
         <addaction name="actionEdit"/>
+        <addaction name="actionToggleSystemAudio"/>
        </widget>
       </item>
       <item>
@@ -150,6 +151,24 @@
   <action name="actionDuplicate">
    <property name="text">
     <string>Duplicate</string>
+   </property>
+  </action>
+  <action name="actionToggleSystemAudio">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset>
+     <normaloff>:/res/images/icons/audio.svg</normaloff>:/res/images/icons/audio.svg</iconset>
+   </property>
+   <property name="text">
+    <string>ToggleSystemAudio</string>
+   </property>
+   <property name="toolTip">
+    <string>Toggle system audio output</string>
+   </property>
+   <property name="iconVisibleInMenu">
+    <bool>false</bool>
    </property>
   </action>
  </widget>

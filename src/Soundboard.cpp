@@ -112,6 +112,11 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	addAction(renameMedia);
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
+
+	// Initialize system audio player
+	systemAudioPlayer = new QMediaPlayer(this);
+	systemAudioOutput = new QAudioOutput(this);
+	systemAudioPlayer->setAudioOutput(systemAudioOutput);
 }
 
 Soundboard::~Soundboard()
@@ -228,6 +233,7 @@ void Soundboard::save(OBSData saveData)
 		obs_data_set_string(saveData, "current_sound", QT_TO_UTF8(obj->getName()));
 
 	obs_data_set_bool(saveData, "use_countdown", ui->mediaControls->countDownTimer);
+	obs_data_set_bool(saveData, "system_audio_enabled", systemAudioEnabled);
 }
 
 void Soundboard::loadSource(OBSData saveData)
@@ -293,6 +299,9 @@ void Soundboard::load(OBSData saveData)
 
 	bool countdown = obs_data_get_bool(saveData, "use_countdown");
 	ui->mediaControls->countDownTimer = countdown;
+
+	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
+	ui->actionToggleSystemAudio->setChecked(systemAudioEnabled);
 }
 
 void Soundboard::clear()
@@ -300,6 +309,11 @@ void Soundboard::clear()
 	ui->mediaControls->countDownTimer = false;
 	ui->mediaControls->SetSource(nullptr);
 	source = nullptr;
+
+	// Stop system audio player
+	if (systemAudioPlayer) {
+		systemAudioPlayer->stop();
+	}
 
 	prevPath = "";
 
@@ -323,6 +337,12 @@ void Soundboard::play(MediaObj *obj)
 
 	if (prevPath == path) {
 		obs_source_media_restart(source);
+
+		// Also restart system audio if enabled
+		if (systemAudioEnabled && systemAudioPlayer) {
+			systemAudioPlayer->stop();
+			systemAudioPlayer->play();
+		}
 		return;
 	}
 
@@ -337,6 +357,14 @@ void Soundboard::play(MediaObj *obj)
 	obs_source_update(source, settings);
 
 	ui->list->setCurrentItem(item);
+
+	// Play through system audio if enabled
+	if (systemAudioEnabled && systemAudioPlayer) {
+		systemAudioPlayer->setSource(QUrl::fromLocalFile(path));
+		systemAudioPlayer->setLoops(obj->loopEnabled() ? QMediaPlayer::Infinite : 1);
+		systemAudioOutput->setVolume(obj->getVolume());
+		systemAudioPlayer->play();
+	}
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)
@@ -477,6 +505,16 @@ void Soundboard::on_actionDuplicate_triggered()
 	bool loop = obj->loopEnabled();
 	MediaObj *newObj = add(name, path);
 	newObj->setLoopEnabled(loop);
+}
+
+void Soundboard::on_actionToggleSystemAudio_toggled(bool checked)
+{
+	systemAudioEnabled = checked;
+
+	// Stop system audio player if disabling
+	if (!checked && systemAudioPlayer) {
+		systemAudioPlayer->stop();
+	}
 }
 
 void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
