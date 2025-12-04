@@ -61,3 +61,22 @@ target_sources(
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+# Bundle Qt Multimedia framework for macOS
+if(OS_MACOS AND ENABLE_QT)
+  # Update RPATH to look in plugin's own Frameworks folder first
+  set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+    INSTALL_RPATH "@loader_path/../Frameworks;@executable_path/../Frameworks"
+  )
+
+  add_custom_command(
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:${CMAKE_PROJECT_NAME}>/Frameworks"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "$<TARGET_FILE_DIR:Qt6::Multimedia>/../.."
+      "$<TARGET_BUNDLE_CONTENT_DIR:${CMAKE_PROJECT_NAME}>/Frameworks/QtMultimedia.framework"
+    COMMENT "Bundling Qt Multimedia framework"
+    VERBATIM
+  )
+endif()
