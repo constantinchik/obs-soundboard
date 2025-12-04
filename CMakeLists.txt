@@ -64,13 +64,21 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 
 # Bundle Qt Multimedia framework for macOS
 if(APPLE AND ENABLE_QT)
-  # Get Qt installation prefix from QtCore location
-  get_target_property(QT6_CORE_LOCATION Qt6::Core LOCATION)
-  get_filename_component(QT6_INSTALL_PREFIX "${QT6_CORE_LOCATION}/../../.." ABSOLUTE)
+  # Get Qt Multimedia framework location
+  get_target_property(QT6_MULTIMEDIA_LOCATION Qt6::Multimedia IMPORTED_LOCATION_RELWITHDEBINFO)
+  if(NOT QT6_MULTIMEDIA_LOCATION)
+    get_target_property(QT6_MULTIMEDIA_LOCATION Qt6::Multimedia IMPORTED_LOCATION_RELEASE)
+  endif()
+  if(NOT QT6_MULTIMEDIA_LOCATION)
+    get_target_property(QT6_MULTIMEDIA_LOCATION Qt6::Multimedia IMPORTED_LOCATION)
+  endif()
+
+  # Get framework directory (go up from lib to framework root)
+  get_filename_component(QT6_MULTIMEDIA_FRAMEWORK "${QT6_MULTIMEDIA_LOCATION}/../../.." ABSOLUTE)
 
   # Install Qt Multimedia framework into plugin bundle
   install(CODE "
-    file(COPY \"${QT6_INSTALL_PREFIX}/lib/QtMultimedia.framework\"
+    file(COPY \"${QT6_MULTIMEDIA_FRAMEWORK}\"
          DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_name}.plugin/Contents/Frameworks\"
          PATTERN \"Headers\" EXCLUDE
          PATTERN \"*.prl\" EXCLUDE)
