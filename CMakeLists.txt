@@ -64,9 +64,9 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 
 # Bundle Qt Multimedia framework for macOS
 if(APPLE AND ENABLE_QT)
-  # Get Qt installation prefix
-  get_target_property(QT6_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-  get_filename_component(QT6_INSTALL_PREFIX "${QT6_QMAKE_EXECUTABLE}/../../" ABSOLUTE)
+  # Get Qt installation prefix from QtCore location
+  get_target_property(QT6_CORE_LOCATION Qt6::Core LOCATION)
+  get_filename_component(QT6_INSTALL_PREFIX "${QT6_CORE_LOCATION}/../../.." ABSOLUTE)
 
   # Install Qt Multimedia framework into plugin bundle
   install(CODE "
