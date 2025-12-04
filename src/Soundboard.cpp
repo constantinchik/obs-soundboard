@@ -126,10 +126,25 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
 
+#ifdef HAVE_QT_MULTIMEDIA
 	// Initialize system audio player
-	systemAudioPlayer = new QMediaPlayer(this);
-	systemAudioOutput = new QAudioOutput(this);
-	systemAudioPlayer->setAudioOutput(systemAudioOutput);
+	try {
+		systemAudioPlayer = new QMediaPlayer(this);
+		systemAudioOutput = new QAudioOutput(this);
+		systemAudioPlayer->setAudioOutput(systemAudioOutput);
+		blog(LOG_INFO, "[Soundboard] System audio player initialized successfully");
+	} catch (const std::exception &e) {
+		blog(LOG_WARNING, "[Soundboard] Failed to initialize system audio player: %s", e.what());
+		systemAudioPlayer = nullptr;
+		systemAudioOutput = nullptr;
+	} catch (...) {
+		blog(LOG_WARNING, "[Soundboard] Failed to initialize system audio player: unknown error");
+		systemAudioPlayer = nullptr;
+		systemAudioOutput = nullptr;
+	}
+#else
+	blog(LOG_INFO, "[Soundboard] Qt Multimedia not available - system audio output disabled");
+#endif
 }
 
 Soundboard::~Soundboard()
@@ -340,6 +355,20 @@ void Soundboard::load(OBSData saveData)
 
 	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
 	ui->actionToggleSystemAudio->setChecked(systemAudioEnabled);
+
+#ifdef HAVE_QT_MULTIMEDIA
+	// Disable system audio toggle if player initialization failed
+	if (!systemAudioPlayer) {
+		ui->actionToggleSystemAudio->setEnabled(false);
+		ui->actionToggleSystemAudio->setToolTip("System audio not available (Qt Multimedia not loaded)");
+		systemAudioEnabled = false;
+	}
+#else
+	// Disable system audio toggle if Qt Multimedia not compiled in
+	ui->actionToggleSystemAudio->setEnabled(false);
+	ui->actionToggleSystemAudio->setToolTip("System audio not available (Qt Multimedia not compiled in)");
+	systemAudioEnabled = false;
+#endif
 }
 
 void Soundboard::clear()
@@ -352,10 +381,12 @@ void Soundboard::clear()
 	ui->mediaControls->SetSource(nullptr);
 	source = nullptr;
 
+#ifdef HAVE_QT_MULTIMEDIA
 	// Stop system audio player
 	if (systemAudioPlayer) {
 		systemAudioPlayer->stop();
 	}
+#endif
 
 	prevPath = "";
 
@@ -380,11 +411,13 @@ void Soundboard::play(MediaObj *obj)
 	if (prevPath == path) {
 		obs_source_media_restart(source);
 
+#ifdef HAVE_QT_MULTIMEDIA
 		// Also restart system audio if enabled
 		if (systemAudioEnabled && systemAudioPlayer) {
 			systemAudioPlayer->stop();
 			systemAudioPlayer->play();
 		}
+#endif
 		return;
 	}
 
@@ -400,6 +433,7 @@ void Soundboard::play(MediaObj *obj)
 
 	ui->list->setCurrentItem(item);
 
+#ifdef HAVE_QT_MULTIMEDIA
 	// Play through system audio if enabled
 	if (systemAudioEnabled && systemAudioPlayer) {
 		systemAudioPlayer->setSource(QUrl::fromLocalFile(path));
@@ -407,6 +441,7 @@ void Soundboard::play(MediaObj *obj)
 		systemAudioOutput->setVolume(obj->getVolume());
 		systemAudioPlayer->play();
 	}
+#endif
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)
@@ -553,10 +588,12 @@ void Soundboard::on_actionToggleSystemAudio_toggled(bool checked)
 {
 	systemAudioEnabled = checked;
 
+#ifdef HAVE_QT_MULTIMEDIA
 	// Stop system audio player if disabling
 	if (!checked && systemAudioPlayer) {
 		systemAudioPlayer->stop();
 	}
+#endif
 }
 
 void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
@@ -600,16 +637,20 @@ void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
 
 void Soundboard::mediaSourceStopped()
 {
+#ifdef HAVE_QT_MULTIMEDIA
 	if (systemAudioPlayer) {
 		systemAudioPlayer->stop();
 	}
+#endif
 }
 
 void Soundboard::mediaSourcePaused()
 {
+#ifdef HAVE_QT_MULTIMEDIA
 	if (systemAudioPlayer) {
 		systemAudioPlayer->pause();
 	}
+#endif
 }
 
 void Soundboard::dragEnterEvent(QDragEnterEvent *event)

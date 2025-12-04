@@ -6,8 +6,11 @@
 
 #include <QPointer>
 #include <QStyledItemDelegate>
+
+#ifdef HAVE_QT_MULTIMEDIA
 #include <QMediaPlayer>
 #include <QAudioOutput>
+#endif
 
 #include <memory>
 
@@ -32,8 +35,10 @@ private:
 	bool actionsEnabled = false;
 	bool systemAudioEnabled = false;
 
+#ifdef HAVE_QT_MULTIMEDIA
 	QMediaPlayer *systemAudioPlayer = nullptr;
 	QAudioOutput *systemAudioOutput = nullptr;
+#endif
 
 	QAction *renameMedia = nullptr;
 

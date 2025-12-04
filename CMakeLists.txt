@@ -23,7 +23,17 @@ endif()
 
 if(ENABLE_QT)
   find_package(Qt6 COMPONENTS Widgets Core Multimedia)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Multimedia)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
+
+  # Qt Multimedia is optional - only link if found
+  if(TARGET Qt6::Multimedia)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Multimedia)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_QT_MULTIMEDIA)
+    message(STATUS "Qt6 Multimedia found - system audio output will be available")
+  else()
+    message(WARNING "Qt6 Multimedia not found - system audio output will be disabled")
+  endif()
+
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
     PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -62,8 +72,8 @@ target_sources(
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
-# Bundle Qt Multimedia framework for macOS
-if(APPLE AND ENABLE_QT)
+# Bundle Qt Multimedia framework for macOS (only if available)
+if(APPLE AND ENABLE_QT AND TARGET Qt6::Multimedia)
   # Get Qt Multimedia framework location
   get_target_property(QT6_MULTIMEDIA_LOCATION Qt6::Multimedia IMPORTED_LOCATION_RELWITHDEBINFO)
   if(NOT QT6_MULTIMEDIA_LOCATION)
@@ -73,19 +83,22 @@ if(APPLE AND ENABLE_QT)
     get_target_property(QT6_MULTIMEDIA_LOCATION Qt6::Multimedia IMPORTED_LOCATION)
   endif()
 
-  # Get framework directory (go up from lib to framework root)
-  get_filename_component(QT6_MULTIMEDIA_FRAMEWORK "${QT6_MULTIMEDIA_LOCATION}/../../.." ABSOLUTE)
+  if(QT6_MULTIMEDIA_LOCATION)
+    # Get framework directory (go up from lib to framework root)
+    get_filename_component(QT6_MULTIMEDIA_FRAMEWORK "${QT6_MULTIMEDIA_LOCATION}/../../.." ABSOLUTE)
 
-  # Install Qt Multimedia framework into plugin bundle
-  install(CODE "
-    file(COPY \"${QT6_MULTIMEDIA_FRAMEWORK}\"
-         DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_name}.plugin/Contents/Frameworks\"
-         PATTERN \"Headers\" EXCLUDE
-         PATTERN \"*.prl\" EXCLUDE)
-  " COMPONENT Runtime)
+    # Install Qt Multimedia framework into plugin bundle
+    install(CODE "
+      file(COPY \"${QT6_MULTIMEDIA_FRAMEWORK}\"
+           DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_name}.plugin/Contents/Frameworks\"
+           PATTERN \"Headers\" EXCLUDE
+           PATTERN \"*.prl\" EXCLUDE)
+    " COMPONENT Runtime)
 
-  # Update RPATH to look in plugin's own Frameworks folder
-  set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
-    INSTALL_RPATH "@loader_path/../Frameworks;@executable_path/../Frameworks"
-  )
+    # Update RPATH to look in plugin's own Frameworks folder
+    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+      INSTALL_RPATH "@loader_path/../Frameworks;@executable_path/../Frameworks"
+    )
+    message(STATUS "Qt6 Multimedia framework will be bundled")
+  endif()
 endif()
