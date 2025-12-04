@@ -71,6 +71,8 @@ public:
 	void load(OBSData saveData);
 
 	void createSource();
+	void connectSourceSignals();
+	void disconnectSourceSignals();
 
 protected:
 	virtual void dragEnterEvent(QDragEnterEvent *event) override;

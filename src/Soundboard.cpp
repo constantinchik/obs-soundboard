@@ -79,6 +79,19 @@ void onEvent(enum obs_frontend_event event, void *data)
 		break;
 	};
 }
+
+// Static signal callbacks
+void mediaStopped(void *data, calldata_t *)
+{
+	Soundboard *sb = static_cast<Soundboard *>(data);
+	QMetaObject::invokeMethod(sb, &Soundboard::mediaSourceStopped);
+}
+
+void mediaPaused(void *data, calldata_t *)
+{
+	Soundboard *sb = static_cast<Soundboard *>(data);
+	QMetaObject::invokeMethod(sb, &Soundboard::mediaSourcePaused);
+}
 } // namespace
 
 Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
@@ -121,6 +134,7 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 
 Soundboard::~Soundboard()
 {
+	disconnectSourceSignals();
 	obs_frontend_remove_event_callback(onEvent, this);
 	obs_frontend_remove_save_callback(onSave, this);
 }
@@ -149,6 +163,28 @@ QListWidgetItem *Soundboard::findItem(MediaObj *obj)
 	return nullptr;
 }
 
+void Soundboard::connectSourceSignals()
+{
+	if (obs_obj_invalid(source))
+		return;
+
+	obs_source_t *s = source.Get();
+	signal_handler_t *sh = obs_source_get_signal_handler(s);
+	signal_handler_connect(sh, "media_stopped", mediaStopped, this);
+	signal_handler_connect(sh, "media_pause", mediaPaused, this);
+}
+
+void Soundboard::disconnectSourceSignals()
+{
+	if (obs_obj_invalid(source))
+		return;
+
+	obs_source_t *s = source.Get();
+	signal_handler_t *sh = obs_source_get_signal_handler(s);
+	signal_handler_disconnect(sh, "media_stopped", mediaStopped, this);
+	signal_handler_disconnect(sh, "media_pause", mediaPaused, this);
+}
+
 void Soundboard::createSource()
 {
 	if (obs_obj_invalid(source)) {
@@ -156,21 +192,7 @@ void Soundboard::createSource()
 		obs_source_set_hidden(source, true);
 
 		ui->mediaControls->SetSource(source.Get());
-
-		// Connect to media signals to synchronize system audio player
-		auto mediaStopped = [](void *data, calldata_t *) {
-			Soundboard *sb = static_cast<Soundboard *>(data);
-			QMetaObject::invokeMethod(sb, &Soundboard::mediaSourceStopped);
-		};
-		auto mediaPaused = [](void *data, calldata_t *) {
-			Soundboard *sb = static_cast<Soundboard *>(data);
-			QMetaObject::invokeMethod(sb, &Soundboard::mediaSourcePaused);
-		};
-
-		obs_source_t *s = source.Get();
-		signal_handler_t *sh = obs_source_get_signal_handler(s);
-		signal_handler_connect(sh, "media_stopped", mediaStopped, this);
-		signal_handler_connect(sh, "media_pause", mediaPaused, this);
+		connectSourceSignals();
 	}
 
 	obs_set_output_source(63, source);
@@ -264,6 +286,7 @@ void Soundboard::loadSource(OBSData saveData)
 			return;
 
 		ui->mediaControls->SetSource(source.Get());
+		connectSourceSignals();
 	}
 }
 
@@ -322,6 +345,10 @@ void Soundboard::load(OBSData saveData)
 void Soundboard::clear()
 {
 	ui->mediaControls->countDownTimer = false;
+
+	// Disconnect signals before clearing source
+	disconnectSourceSignals();
+
 	ui->mediaControls->SetSource(nullptr);
 	source = nullptr;
 
