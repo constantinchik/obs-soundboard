@@ -86,6 +86,7 @@
         <addaction name="actionAdd"/>
         <addaction name="actionRemove"/>
         <addaction name="separator"/>
+        <addaction name="actionSystemAudio"/>
         <addaction name="actionEdit"/>
        </widget>
       </item>
@@ -145,6 +146,27 @@
    </property>
    <property name="class" stdset="0">
     <string>icon-gear</string>
+   </property>
+  </action>
+  <action name="actionSystemAudio">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset>
+     <normaloff>:/res/images/audio-output.svg</normaloff>:/res/images/audio-output.svg</iconset>
+   </property>
+   <property name="text">
+    <string>SystemAudio</string>
+   </property>
+   <property name="toolTip">
+    <string>SystemAudioTooltip</string>
+   </property>
+   <property name="iconVisibleInMenu">
+    <bool>false</bool>
+   </property>
+   <property name="class" stdset="0">
+    <string>icon-audio-output</string>
    </property>
   </action>
   <action name="actionDuplicate">
