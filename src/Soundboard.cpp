@@ -14,20 +14,19 @@
 #include "dialogs/MediaEdit.hpp"
 #include "models/MediaData.hpp"
 
+#include "SystemAudio.hpp"
+
 #include <QAction>
-#include <QAudioOutput>
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QFileInfo>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
-#include <QMediaPlayer>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QObject>
-#include <QUrl>
 
 #include "moc_Soundboard.cpp"
 
@@ -115,11 +114,6 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	addAction(renameMedia);
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
-
-	// Initialize system audio player
-	systemAudioPlayer = new QMediaPlayer(this);
-	audioOutput = new QAudioOutput(this);
-	systemAudioPlayer->setAudioOutput(audioOutput);
 }
 
 Soundboard::~Soundboard()
@@ -313,7 +307,7 @@ void Soundboard::clear()
 	ui->mediaControls->SetSource(nullptr);
 	source = nullptr;
 
-	systemAudioPlayer->stop();
+	SystemAudio::instance()->stop();
 	systemAudioEnabled = false;
 	ui->actionSystemAudio->setChecked(false);
 
@@ -341,7 +335,7 @@ void Soundboard::play(MediaObj *obj)
 		obs_source_media_restart(source);
 
 		if (systemAudioEnabled)
-			playSystemAudio(path, obj->getVolume(), obj->loopEnabled());
+			SystemAudio::instance()->play(path, obj->getVolume(), obj->loopEnabled());
 
 		return;
 	}
@@ -357,18 +351,9 @@ void Soundboard::play(MediaObj *obj)
 	obs_source_update(source, settings);
 
 	if (systemAudioEnabled)
-		playSystemAudio(path, obj->getVolume(), obj->loopEnabled());
+		SystemAudio::instance()->play(path, obj->getVolume(), obj->loopEnabled());
 
 	ui->list->setCurrentItem(item);
-}
-
-void Soundboard::playSystemAudio(const QString &path, float volume, bool loop)
-{
-	systemAudioPlayer->stop();
-	systemAudioPlayer->setSource(QUrl::fromLocalFile(path));
-	audioOutput->setVolume(volume);
-	systemAudioPlayer->setLoops(loop ? QMediaPlayer::Infinite : 1);
-	systemAudioPlayer->play();
 }
 
 void Soundboard::on_actionSystemAudio_toggled(bool checked)
@@ -376,7 +361,7 @@ void Soundboard::on_actionSystemAudio_toggled(bool checked)
 	systemAudioEnabled = checked;
 
 	if (!checked)
-		systemAudioPlayer->stop();
+		SystemAudio::instance()->stop();
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)
