@@ -154,7 +154,7 @@
    </property>
    <property name="icon">
     <iconset>
-     <normaloff>:/res/images/audio-output.svg</normaloff>:/res/images/audio-output.svg</iconset>
+     <normaloff>:/res/images/mute.svg</normaloff>:/res/images/mute.svg</iconset>
    </property>
    <property name="text">
     <string>SystemAudio</string>
@@ -166,7 +166,7 @@
     <bool>false</bool>
    </property>
    <property name="class" stdset="0">
-    <string>icon-audio-output</string>
+    <string>icon-mute</string>
    </property>
   </action>
   <action name="actionDuplicate">

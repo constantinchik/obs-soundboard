@@ -360,8 +360,12 @@ void Soundboard::on_actionSystemAudio_toggled(bool checked)
 {
 	systemAudioEnabled = checked;
 
-	if (!checked)
+	if (checked) {
+		ui->actionSystemAudio->setIcon(QIcon(":/settings/images/settings/audio.svg"));
+	} else {
+		ui->actionSystemAudio->setIcon(QIcon(":/res/images/mute.svg"));
 		SystemAudio::instance()->stop();
+	}
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)
