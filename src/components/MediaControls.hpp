@@ -71,6 +71,10 @@ public slots:
 	void PlayMedia();
 	void PauseMedia();
 
+signals:
+	void stopClicked();
+	void restartClicked();
+
 public:
 	MediaControls(QWidget *parent = nullptr);
 	~MediaControls();

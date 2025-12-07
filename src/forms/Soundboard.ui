@@ -67,28 +67,72 @@
        </widget>
       </item>
       <item>
-       <widget class="QToolBar" name="toolbar">
-        <property name="styleSheet">
-         <string notr="true">QToolBar { background: transparent; }</string>
+       <layout class="QHBoxLayout" name="toolbarLayout">
+        <property name="spacing">
+         <number>0</number>
         </property>
-        <property name="movable">
-         <bool>false</bool>
-        </property>
-        <property name="iconSize">
-         <size>
-          <width>16</width>
-          <height>16</height>
-         </size>
-        </property>
-        <property name="floatable">
-         <bool>false</bool>
-        </property>
-        <addaction name="actionAdd"/>
-        <addaction name="actionRemove"/>
-        <addaction name="separator"/>
-        <addaction name="actionSystemAudio"/>
-        <addaction name="actionEdit"/>
-       </widget>
+        <item>
+         <widget class="QToolBar" name="toolbar">
+          <property name="styleSheet">
+           <string notr="true">QToolBar { background: transparent; }</string>
+          </property>
+          <property name="movable">
+           <bool>false</bool>
+          </property>
+          <property name="iconSize">
+           <size>
+            <width>16</width>
+            <height>16</height>
+           </size>
+          </property>
+          <property name="floatable">
+           <bool>false</bool>
+          </property>
+          <addaction name="actionAdd"/>
+          <addaction name="actionRemove"/>
+          <addaction name="separator"/>
+          <addaction name="actionEdit"/>
+         </widget>
+        </item>
+        <item>
+         <widget class="QCheckBox" name="systemAudioCheckbox">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>22</width>
+            <height>22</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>SystemAudioOff</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+          <property name="class" stdset="0">
+           <string>indicator-mute</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="toolbarSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
       </item>
       <item>
        <widget class="MediaControls" name="mediaControls" native="true"/>
@@ -146,27 +190,6 @@
    </property>
    <property name="class" stdset="0">
     <string>icon-gear</string>
-   </property>
-  </action>
-  <action name="actionSystemAudio">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="icon">
-    <iconset>
-     <normaloff>:/res/images/mute.svg</normaloff>:/res/images/mute.svg</iconset>
-   </property>
-   <property name="text">
-    <string>SystemAudio</string>
-   </property>
-   <property name="toolTip">
-    <string>SystemAudioTooltip</string>
-   </property>
-   <property name="iconVisibleInMenu">
-    <bool>false</bool>
-   </property>
-   <property name="class" stdset="0">
-    <string>icon-mute</string>
    </property>
   </action>
   <action name="actionDuplicate">

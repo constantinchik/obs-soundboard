@@ -38,11 +38,13 @@ private:
 
 private slots:
 	void updateSystemAudioVolume();
+	void onMediaStopClicked();
+	void onMediaRestartClicked();
 	void on_list_itemClicked();
 	void on_actionAdd_triggered();
 	void on_actionRemove_triggered();
 	void on_actionEdit_triggered();
-	void on_actionSystemAudio_toggled(bool checked);
+	void onSystemAudioToggled(bool checked);
 	void updateActions();
 	void on_list_customContextMenuRequested(const QPoint &pos);
 	void on_actionDuplicate_triggered();

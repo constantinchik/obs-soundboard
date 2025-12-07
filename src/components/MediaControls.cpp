@@ -382,6 +382,7 @@ void MediaControls::RestartMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_restart(source);
+		emit restartClicked();
 	}
 }
 
@@ -428,6 +429,7 @@ void MediaControls::PlaylistPrevious()
 void MediaControls::on_stopButton_clicked()
 {
 	StopMedia();
+	emit stopClicked();
 }
 
 void MediaControls::on_nextButton_clicked()

@@ -17,6 +17,8 @@
 #include "SystemAudio.hpp"
 
 #include <QAction>
+#include <QApplication>
+#include <QCheckBox>
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -36,6 +38,7 @@
 #define MainStr(str) QString(obs_frontend_get_locale_string(str))
 
 namespace {
+
 QString getDefaultString(QString name = "")
 {
 	if (name.isEmpty())
@@ -114,6 +117,11 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	addAction(renameMedia);
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
+
+	// Connect media control signals for system audio
+	connect(ui->mediaControls, &MediaControls::stopClicked, this, &Soundboard::onMediaStopClicked);
+	connect(ui->mediaControls, &MediaControls::restartClicked, this, &Soundboard::onMediaRestartClicked);
+	connect(ui->systemAudioCheckbox, &QCheckBox::toggled, this, &Soundboard::onSystemAudioToggled);
 }
 
 Soundboard::~Soundboard()
@@ -182,6 +190,25 @@ void Soundboard::updateSystemAudioVolume()
 	float combinedVolume = soundVolume * sourceVolume;
 
 	SystemAudio::instance()->setVolume(combinedVolume);
+}
+
+void Soundboard::onMediaStopClicked()
+{
+	SystemAudio::instance()->stop();
+	currentPlayingMedia = nullptr;
+}
+
+void Soundboard::onMediaRestartClicked()
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	QString path = currentPlayingMedia->getPath();
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled());
 }
 
 OBSDataArray Soundboard::saveMedia()
@@ -324,7 +351,10 @@ void Soundboard::load(OBSData saveData)
 	ui->mediaControls->countDownTimer = countdown;
 
 	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
-	ui->actionSystemAudio->setChecked(systemAudioEnabled);
+	// Checkbox uses indicator-mute: checked = mute icon, unchecked = speaker icon
+	// Invert: when audio enabled, checkbox unchecked (shows speaker), when disabled, checked (shows mute)
+	ui->systemAudioCheckbox->setChecked(!systemAudioEnabled);
+	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
 }
 
 void Soundboard::clear()
@@ -337,7 +367,8 @@ void Soundboard::clear()
 	SystemAudio::instance()->stop();
 	systemAudioEnabled = false;
 	currentPlayingMedia = nullptr;
-	ui->actionSystemAudio->setChecked(false);
+	ui->systemAudioCheckbox->setChecked(true); // Checked = mute icon = audio disabled
+	ui->systemAudioCheckbox->setToolTip(QTStr("SystemAudioOff"));
 
 	prevPath = "";
 
@@ -390,15 +421,15 @@ void Soundboard::play(MediaObj *obj)
 	ui->list->setCurrentItem(item);
 }
 
-void Soundboard::on_actionSystemAudio_toggled(bool checked)
+void Soundboard::onSystemAudioToggled(bool checked)
 {
-	systemAudioEnabled = checked;
+	// Invert: checked = mute icon = audio disabled, unchecked = speaker icon = audio enabled
+	systemAudioEnabled = !checked;
+	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
 
-	if (checked) {
-		ui->actionSystemAudio->setIcon(QIcon(":/settings/images/settings/audio.svg"));
-	} else {
-		ui->actionSystemAudio->setIcon(QIcon(":/res/images/mute.svg"));
+	if (!systemAudioEnabled) {
 		SystemAudio::instance()->stop();
+		currentPlayingMedia = nullptr;
 	}
 }
 
