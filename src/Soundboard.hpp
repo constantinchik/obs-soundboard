@@ -40,6 +40,9 @@ private slots:
 	void updateSystemAudioVolume();
 	void onMediaStopClicked();
 	void onMediaRestartClicked();
+	void onMediaPauseClicked();
+	void onMediaPlayClicked();
+	void onMediaSeeked(int64_t timeMs);
 	void on_list_itemClicked();
 	void on_actionAdd_triggered();
 	void on_actionRemove_triggered();

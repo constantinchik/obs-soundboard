@@ -74,6 +74,9 @@ public slots:
 signals:
 	void stopClicked();
 	void restartClicked();
+	void pauseClicked();
+	void playClicked();
+	void seeked(int64_t timeMs);
 
 public:
 	MediaControls(QWidget *parent = nullptr);

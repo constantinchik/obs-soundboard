@@ -121,6 +121,9 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	// Connect media control signals for system audio
 	connect(ui->mediaControls, &MediaControls::stopClicked, this, &Soundboard::onMediaStopClicked);
 	connect(ui->mediaControls, &MediaControls::restartClicked, this, &Soundboard::onMediaRestartClicked);
+	connect(ui->mediaControls, &MediaControls::pauseClicked, this, &Soundboard::onMediaPauseClicked);
+	connect(ui->mediaControls, &MediaControls::playClicked, this, &Soundboard::onMediaPlayClicked);
+	connect(ui->mediaControls, &MediaControls::seeked, this, &Soundboard::onMediaSeeked);
 	connect(ui->systemAudioCheckbox, &QCheckBox::toggled, this, &Soundboard::onSystemAudioToggled);
 }
 
@@ -209,6 +212,37 @@ void Soundboard::onMediaRestartClicked()
 	float combinedVolume = soundVolume * sourceVolume;
 
 	SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled());
+}
+
+void Soundboard::onMediaPauseClicked()
+{
+	if (!systemAudioEnabled)
+		return;
+
+	SystemAudio::instance()->pause();
+}
+
+void Soundboard::onMediaPlayClicked()
+{
+	if (!systemAudioEnabled)
+		return;
+
+	SystemAudio::instance()->resume();
+}
+
+void Soundboard::onMediaSeeked(int64_t timeMs)
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	// NSSound and other backends may not handle seeking while paused correctly
+	// So we restart playback from the new position
+	QString path = currentPlayingMedia->getPath();
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(), timeMs);
 }
 
 OBSDataArray Soundboard::saveMedia()
@@ -429,7 +463,21 @@ void Soundboard::onSystemAudioToggled(bool checked)
 
 	if (!systemAudioEnabled) {
 		SystemAudio::instance()->stop();
-		currentPlayingMedia = nullptr;
+	} else {
+		// If monitoring was just enabled and OBS is playing, sync system audio
+		if (currentPlayingMedia && !obs_obj_invalid(source)) {
+			obs_media_state state = obs_source_media_get_state(source);
+			if (state == OBS_MEDIA_STATE_PLAYING) {
+				QString path = currentPlayingMedia->getPath();
+				float soundVolume = currentPlayingMedia->getVolume();
+				float sourceVolume = obs_source_get_volume(source);
+				float combinedVolume = soundVolume * sourceVolume;
+				int64_t currentTimeMs = obs_source_media_get_time(source);
+
+				// Start playback from current position
+				SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(), currentTimeMs);
+			}
+		}
 	}
 }
 

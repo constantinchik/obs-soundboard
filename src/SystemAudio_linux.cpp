@@ -26,9 +26,10 @@ SystemAudio::~SystemAudio()
 	delete impl;
 }
 
-void SystemAudio::play(const QString &path, float volume, bool loop)
+void SystemAudio::play(const QString &path, float volume, bool loop, int64_t startTimeMs)
 {
 	Q_UNUSED(loop); // Loop not easily supported with subprocess
+	Q_UNUSED(startTimeMs); // Seek not supported with subprocess
 
 	stop();
 
@@ -63,15 +64,42 @@ void SystemAudio::stop()
 	}
 }
 
+void SystemAudio::pause()
+{
+	// Pause not supported with subprocess approach - just stop
+	stop();
+}
+
+void SystemAudio::resume()
+{
+	// Resume not supported with subprocess approach
+}
+
 void SystemAudio::setVolume(float volume)
 {
 	// Volume change mid-play not supported with subprocess approach
 	impl->volume = volume;
 }
 
+void SystemAudio::seekTo(int64_t timeMs)
+{
+	Q_UNUSED(timeMs);
+	// Seek not supported with subprocess approach
+}
+
 bool SystemAudio::isPlaying() const
 {
 	return impl->process && impl->process->state() == QProcess::Running;
+}
+
+bool SystemAudio::isPaused() const
+{
+	return false; // Pause not supported
+}
+
+int64_t SystemAudio::currentTime() const
+{
+	return 0; // Time tracking not supported
 }
 
 #endif // __linux__ || __FreeBSD__

@@ -12,10 +12,15 @@ class SystemAudio {
 public:
 	static SystemAudio *instance();
 
-	void play(const QString &path, float volume, bool loop);
+	void play(const QString &path, float volume, bool loop, int64_t startTimeMs = 0);
 	void stop();
+	void pause();
+	void resume();
 	void setVolume(float volume);
+	void seekTo(int64_t timeMs);
 	bool isPlaying() const;
+	bool isPaused() const;
+	int64_t currentTime() const;
 
 private:
 	SystemAudio();

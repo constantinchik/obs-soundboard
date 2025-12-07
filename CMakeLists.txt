@@ -64,6 +64,7 @@ target_sources(
 # Platform-specific system audio implementation
 if(OS_MACOS)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/SystemAudio_macos.mm)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework AVFoundation" "-framework CoreMedia")
 elseif(OS_WINDOWS)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/SystemAudio_win.cpp)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winmm)
