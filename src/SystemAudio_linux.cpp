@@ -6,6 +6,7 @@
 
 struct SystemAudio::Impl {
 	QProcess *process = nullptr;
+	float volume = 1.0f;
 };
 
 SystemAudio *SystemAudio::instance()
@@ -31,6 +32,7 @@ void SystemAudio::play(const QString &path, float volume, bool loop)
 
 	stop();
 
+	impl->volume = volume;
 	impl->process = new QProcess();
 
 	// Try paplay (PulseAudio) first, fall back to aplay (ALSA)
@@ -59,6 +61,17 @@ void SystemAudio::stop()
 		impl->process->deleteLater();
 		impl->process = nullptr;
 	}
+}
+
+void SystemAudio::setVolume(float volume)
+{
+	// Volume change mid-play not supported with subprocess approach
+	impl->volume = volume;
+}
+
+bool SystemAudio::isPlaying() const
+{
+	return impl->process && impl->process->state() == QProcess::Running;
 }
 
 #endif // __linux__ || __FreeBSD__

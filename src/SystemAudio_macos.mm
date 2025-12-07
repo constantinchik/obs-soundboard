@@ -47,4 +47,16 @@ void SystemAudio::stop()
 	}
 }
 
+void SystemAudio::setVolume(float volume)
+{
+	if (impl->sound && [impl->sound isPlaying]) {
+		[impl->sound setVolume:volume];
+	}
+}
+
+bool SystemAudio::isPlaying() const
+{
+	return impl->sound && [impl->sound isPlaying];
+}
+
 #endif // __APPLE__

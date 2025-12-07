@@ -155,7 +155,33 @@ void Soundboard::createSource()
 		ui->mediaControls->SetSource(source.Get());
 	}
 
+	// Connect to volume changes for real-time system audio sync
+	signal_handler_t *sh = obs_source_get_signal_handler(source);
+	volumeSignal.Connect(sh, "volume", onVolumeChanged, this);
+
 	obs_set_output_source(63, source);
+}
+
+void Soundboard::onVolumeChanged(void *data, calldata_t *cd)
+{
+	Q_UNUSED(cd);
+	Soundboard *sb = static_cast<Soundboard *>(data);
+	QMetaObject::invokeMethod(sb, "updateSystemAudioVolume", Qt::QueuedConnection);
+}
+
+void Soundboard::updateSystemAudioVolume()
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	if (!SystemAudio::instance()->isPlaying())
+		return;
+
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->setVolume(combinedVolume);
 }
 
 OBSDataArray Soundboard::saveMedia()
@@ -305,10 +331,12 @@ void Soundboard::clear()
 {
 	ui->mediaControls->countDownTimer = false;
 	ui->mediaControls->SetSource(nullptr);
+	volumeSignal.Disconnect();
 	source = nullptr;
 
 	SystemAudio::instance()->stop();
 	systemAudioEnabled = false;
+	currentPlayingMedia = nullptr;
 	ui->actionSystemAudio->setChecked(false);
 
 	prevPath = "";
@@ -330,12 +358,18 @@ void Soundboard::clear()
 void Soundboard::play(MediaObj *obj)
 {
 	QString path = obj->getPath();
+	currentPlayingMedia = obj;
+
+	// Calculate combined volume: per-sound volume × source mixer volume
+	float soundVolume = obj->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
 
 	if (prevPath == path) {
 		obs_source_media_restart(source);
 
 		if (systemAudioEnabled)
-			SystemAudio::instance()->play(path, obj->getVolume(), obj->loopEnabled());
+			SystemAudio::instance()->play(path, combinedVolume, obj->loopEnabled());
 
 		return;
 	}
@@ -351,7 +385,7 @@ void Soundboard::play(MediaObj *obj)
 	obs_source_update(source, settings);
 
 	if (systemAudioEnabled)
-		SystemAudio::instance()->play(path, obj->getVolume(), obj->loopEnabled());
+		SystemAudio::instance()->play(path, combinedVolume, obj->loopEnabled());
 
 	ui->list->setCurrentItem(item);
 }

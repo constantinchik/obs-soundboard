@@ -5,7 +5,7 @@
 // Platform-native audio playback for system audio output
 // Does not require Qt Multimedia - uses native APIs:
 // - macOS: NSSound (AppKit)
-// - Windows: PlaySound (WinMM)
+// - Windows: MCI (Media Control Interface)
 // - Linux: paplay/aplay subprocess
 
 class SystemAudio {
@@ -14,6 +14,8 @@ public:
 
 	void play(const QString &path, float volume, bool loop);
 	void stop();
+	void setVolume(float volume);
+	bool isPlaying() const;
 
 private:
 	SystemAudio();
