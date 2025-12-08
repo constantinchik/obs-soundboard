@@ -14,7 +14,11 @@
 #include "dialogs/MediaEdit.hpp"
 #include "models/MediaData.hpp"
 
+#include "SystemAudio.hpp"
+
 #include <QAction>
+#include <QApplication>
+#include <QCheckBox>
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QFileInfo>
@@ -34,6 +38,7 @@
 #define MainStr(str) QString(obs_frontend_get_locale_string(str))
 
 namespace {
+
 QString getDefaultString(QString name = "")
 {
 	if (name.isEmpty())
@@ -112,6 +117,14 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	addAction(renameMedia);
 
 	connect(ui->list->itemDelegate(), &QAbstractItemDelegate::closeEditor, this, &Soundboard::mediaNameEdited);
+
+	// Connect media control signals for system audio
+	connect(ui->mediaControls, &MediaControls::stopClicked, this, &Soundboard::onMediaStopClicked);
+	connect(ui->mediaControls, &MediaControls::restartClicked, this, &Soundboard::onMediaRestartClicked);
+	connect(ui->mediaControls, &MediaControls::pauseClicked, this, &Soundboard::onMediaPauseClicked);
+	connect(ui->mediaControls, &MediaControls::playClicked, this, &Soundboard::onMediaPlayClicked);
+	connect(ui->mediaControls, &MediaControls::seeked, this, &Soundboard::onMediaSeeked);
+	connect(ui->systemAudioCheckbox, &QCheckBox::toggled, this, &Soundboard::onSystemAudioToggled);
 }
 
 Soundboard::~Soundboard()
@@ -153,7 +166,83 @@ void Soundboard::createSource()
 		ui->mediaControls->SetSource(source.Get());
 	}
 
+	// Connect to volume changes for real-time system audio sync
+	signal_handler_t *sh = obs_source_get_signal_handler(source);
+	volumeSignal.Connect(sh, "volume", onVolumeChanged, this);
+
 	obs_set_output_source(63, source);
+}
+
+void Soundboard::onVolumeChanged(void *data, calldata_t *cd)
+{
+	Q_UNUSED(cd);
+	Soundboard *sb = static_cast<Soundboard *>(data);
+	QMetaObject::invokeMethod(sb, "updateSystemAudioVolume", Qt::QueuedConnection);
+}
+
+void Soundboard::updateSystemAudioVolume()
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	if (!SystemAudio::instance()->isPlaying())
+		return;
+
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->setVolume(combinedVolume);
+}
+
+void Soundboard::onMediaStopClicked()
+{
+	SystemAudio::instance()->stop();
+	currentPlayingMedia = nullptr;
+}
+
+void Soundboard::onMediaRestartClicked()
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	QString path = currentPlayingMedia->getPath();
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled());
+}
+
+void Soundboard::onMediaPauseClicked()
+{
+	if (!systemAudioEnabled)
+		return;
+
+	SystemAudio::instance()->pause();
+}
+
+void Soundboard::onMediaPlayClicked()
+{
+	if (!systemAudioEnabled)
+		return;
+
+	SystemAudio::instance()->resume();
+}
+
+void Soundboard::onMediaSeeked(int64_t timeMs)
+{
+	if (!systemAudioEnabled || !currentPlayingMedia)
+		return;
+
+	// NSSound and other backends may not handle seeking while paused correctly
+	// So we restart playback from the new position
+	QString path = currentPlayingMedia->getPath();
+	float soundVolume = currentPlayingMedia->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
+
+	SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(), timeMs);
 }
 
 OBSDataArray Soundboard::saveMedia()
@@ -228,6 +317,7 @@ void Soundboard::save(OBSData saveData)
 		obs_data_set_string(saveData, "current_sound", QT_TO_UTF8(obj->getName()));
 
 	obs_data_set_bool(saveData, "use_countdown", ui->mediaControls->countDownTimer);
+	obs_data_set_bool(saveData, "system_audio_enabled", systemAudioEnabled);
 }
 
 void Soundboard::loadSource(OBSData saveData)
@@ -293,13 +383,26 @@ void Soundboard::load(OBSData saveData)
 
 	bool countdown = obs_data_get_bool(saveData, "use_countdown");
 	ui->mediaControls->countDownTimer = countdown;
+
+	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
+	// Checkbox uses indicator-mute: checked = mute icon, unchecked = speaker icon
+	// Invert: when audio enabled, checkbox unchecked (shows speaker), when disabled, checked (shows mute)
+	ui->systemAudioCheckbox->setChecked(!systemAudioEnabled);
+	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
 }
 
 void Soundboard::clear()
 {
 	ui->mediaControls->countDownTimer = false;
 	ui->mediaControls->SetSource(nullptr);
+	volumeSignal.Disconnect();
 	source = nullptr;
+
+	SystemAudio::instance()->stop();
+	systemAudioEnabled = false;
+	currentPlayingMedia = nullptr;
+	ui->systemAudioCheckbox->setChecked(true); // Checked = mute icon = audio disabled
+	ui->systemAudioCheckbox->setToolTip(QTStr("SystemAudioOff"));
 
 	prevPath = "";
 
@@ -320,9 +423,19 @@ void Soundboard::clear()
 void Soundboard::play(MediaObj *obj)
 {
 	QString path = obj->getPath();
+	currentPlayingMedia = obj;
+
+	// Calculate combined volume: per-sound volume × source mixer volume
+	float soundVolume = obj->getVolume();
+	float sourceVolume = obs_source_get_volume(source);
+	float combinedVolume = soundVolume * sourceVolume;
 
 	if (prevPath == path) {
 		obs_source_media_restart(source);
+
+		if (systemAudioEnabled)
+			SystemAudio::instance()->play(path, combinedVolume, obj->loopEnabled());
+
 		return;
 	}
 
@@ -336,7 +449,36 @@ void Soundboard::play(MediaObj *obj)
 	obs_data_set_bool(settings, "is_local_file", true);
 	obs_source_update(source, settings);
 
+	if (systemAudioEnabled)
+		SystemAudio::instance()->play(path, combinedVolume, obj->loopEnabled());
+
 	ui->list->setCurrentItem(item);
+}
+
+void Soundboard::onSystemAudioToggled(bool checked)
+{
+	// Invert: checked = mute icon = audio disabled, unchecked = speaker icon = audio enabled
+	systemAudioEnabled = !checked;
+	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
+
+	if (!systemAudioEnabled) {
+		SystemAudio::instance()->stop();
+	} else {
+		// If monitoring was just enabled and OBS is playing, sync system audio
+		if (currentPlayingMedia && !obs_obj_invalid(source)) {
+			obs_media_state state = obs_source_media_get_state(source);
+			if (state == OBS_MEDIA_STATE_PLAYING) {
+				QString path = currentPlayingMedia->getPath();
+				float soundVolume = currentPlayingMedia->getVolume();
+				float sourceVolume = obs_source_get_volume(source);
+				float combinedVolume = soundVolume * sourceVolume;
+				int64_t currentTimeMs = obs_source_media_get_time(source);
+
+				// Start playback from current position
+				SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(), currentTimeMs);
+			}
+		}
+	}
 }
 
 void Soundboard::itemRenamed(MediaObj *obj)

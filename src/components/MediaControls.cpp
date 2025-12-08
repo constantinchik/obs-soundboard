@@ -137,14 +137,23 @@ void MediaControls::AbsoluteSliderReleased()
 		return;
 	}
 
-	if (seekTimer.isActive()) {
+	int64_t seekTimeMs = 0;
+	bool wasActive = seekTimer.isActive();
+	if (wasActive) {
 		seekTimer.stop();
+		seekTimeMs = GetSliderTime(seek);
 		if (lastSeek != seek) {
-			obs_source_media_set_time(source, GetSliderTime(seek));
+			obs_source_media_set_time(source, seekTimeMs);
 		}
 
 		UpdateLabels(seek);
 		seek = lastSeek = -1;
+	}
+
+	// Always emit seeked signal when slider was being dragged (timer was active)
+	// This ensures system audio syncs to the final position
+	if (wasActive) {
+		emit seeked(seekTimeMs);
 	}
 
 	if (!prevPaused) {
@@ -382,6 +391,7 @@ void MediaControls::RestartMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_restart(source);
+		emit restartClicked();
 	}
 }
 
@@ -390,6 +400,7 @@ void MediaControls::PlayMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_play_pause(source, false);
+		emit playClicked();
 	}
 }
 
@@ -398,6 +409,7 @@ void MediaControls::PauseMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_play_pause(source, true);
+		emit pauseClicked();
 	}
 }
 
@@ -428,6 +440,7 @@ void MediaControls::PlaylistPrevious()
 void MediaControls::on_stopButton_clicked()
 {
 	StopMedia();
+	emit stopClicked();
 }
 
 void MediaControls::on_nextButton_clicked()
@@ -460,6 +473,7 @@ void MediaControls::MoveSliderFoward(int seconds)
 
 	obs_source_media_set_time(source, ms);
 	SetSliderPosition();
+	emit seeked(ms);
 }
 
 void MediaControls::MoveSliderBackwards(int seconds)
@@ -471,9 +485,12 @@ void MediaControls::MoveSliderBackwards(int seconds)
 
 	int ms = obs_source_media_get_time(source);
 	ms -= seconds * 1000;
+	if (ms < 0)
+		ms = 0;
 
 	obs_source_media_set_time(source, ms);
 	SetSliderPosition();
+	emit seeked(ms);
 }
 
 void MediaControls::UpdateSlideCounter()

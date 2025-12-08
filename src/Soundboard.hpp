@@ -26,16 +26,28 @@ private:
 	QListWidgetItem *findItem(MediaObj *obj);
 
 	OBSSourceAutoRelease source;
+	OBSSignal volumeSignal;
 
 	bool actionsEnabled = false;
+	bool systemAudioEnabled = false;
+	MediaObj *currentPlayingMedia = nullptr;
 
 	QAction *renameMedia = nullptr;
 
+	static void onVolumeChanged(void *data, calldata_t *cd);
+
 private slots:
+	void updateSystemAudioVolume();
+	void onMediaStopClicked();
+	void onMediaRestartClicked();
+	void onMediaPauseClicked();
+	void onMediaPlayClicked();
+	void onMediaSeeked(int64_t timeMs);
 	void on_list_itemClicked();
 	void on_actionAdd_triggered();
 	void on_actionRemove_triggered();
 	void on_actionEdit_triggered();
+	void onSystemAudioToggled(bool checked);
 	void updateActions();
 	void on_list_customContextMenuRequested(const QPoint &pos);
 	void on_actionDuplicate_triggered();
