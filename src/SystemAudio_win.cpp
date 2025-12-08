@@ -1,17 +1,20 @@
 #ifdef _WIN32
 
+#define MINIAUDIO_IMPLEMENTATION
+#include "../deps/miniaudio/miniaudio.h"
+
 #include "SystemAudio.hpp"
 
-#include <windows.h>
-#include <mmsystem.h>
-
-#pragma comment(lib, "winmm.lib")
-
 struct SystemAudio::Impl {
-	QString currentPath;
+	ma_engine engine;
+	ma_sound sound;
+	bool engineInitialized = false;
+	bool soundLoaded = false;
 	bool playing = false;
 	bool paused = false;
+	bool looping = false;
 	float volume = 1.0f;
+	QString currentPath;
 };
 
 SystemAudio *SystemAudio::instance()
@@ -23,64 +26,82 @@ SystemAudio *SystemAudio::instance()
 SystemAudio::SystemAudio()
 {
 	impl = new Impl();
+
+	// Initialize the audio engine
+	ma_engine_config engineConfig = ma_engine_config_init();
+	if (ma_engine_init(&engineConfig, &impl->engine) == MA_SUCCESS) {
+		impl->engineInitialized = true;
+	}
 }
 
 SystemAudio::~SystemAudio()
 {
 	stop();
+	if (impl->engineInitialized) {
+		ma_engine_uninit(&impl->engine);
+	}
 	delete impl;
 }
 
 void SystemAudio::play(const QString &path, float volume, bool loop, int64_t startTimeMs)
 {
+	if (!impl->engineInitialized)
+		return;
+
 	stop();
 
 	impl->currentPath = path;
 	impl->volume = volume;
+	impl->looping = loop;
 
-	// Open the audio file with MCI
-	std::wstring wpath = path.toStdWString();
-	std::wstring openCmd = L"open \"" + wpath + L"\" type mpegvideo alias soundboard";
-	if (mciSendStringW(openCmd.c_str(), NULL, 0, NULL) != 0) {
-		// Try waveaudio for wav files
-		openCmd = L"open \"" + wpath + L"\" type waveaudio alias soundboard";
-		if (mciSendStringW(openCmd.c_str(), NULL, 0, NULL) != 0)
-			return;
+	// Convert QString to UTF-8 for miniaudio
+	QByteArray pathUtf8 = path.toUtf8();
+
+	// Initialize sound from file
+	ma_uint32 flags = MA_SOUND_FLAG_DECODE; // Decode to memory for better seeking
+	if (ma_sound_init_from_file(&impl->engine, pathUtf8.constData(), flags, NULL, NULL, &impl->sound) != MA_SUCCESS) {
+		return;
 	}
 
-	// Set volume (MCI uses 0-1000 scale)
-	int mciVolume = static_cast<int>(volume * 1000);
-	std::wstring volCmd = L"setaudio soundboard volume to " + std::to_wstring(mciVolume);
-	mciSendStringW(volCmd.c_str(), NULL, 0, NULL);
+	impl->soundLoaded = true;
+
+	// Set looping
+	ma_sound_set_looping(&impl->sound, loop ? MA_TRUE : MA_FALSE);
+
+	// Set volume
+	ma_sound_set_volume(&impl->sound, volume);
 
 	// Seek to start time if specified
 	if (startTimeMs > 0) {
-		std::wstring seekCmd = L"seek soundboard to " + std::to_wstring(startTimeMs);
-		mciSendStringW(seekCmd.c_str(), NULL, 0, NULL);
+		// Get sample rate to convert ms to frames
+		ma_uint32 sampleRate = ma_engine_get_sample_rate(&impl->engine);
+		ma_uint64 frameOffset = (startTimeMs * sampleRate) / 1000;
+		ma_sound_seek_to_pcm_frame(&impl->sound, frameOffset);
 	}
 
-	// Play
-	std::wstring playCmd = loop ? L"play soundboard repeat" : L"play soundboard";
-	mciSendStringW(playCmd.c_str(), NULL, 0, NULL);
-
-	impl->playing = true;
+	// Start playback
+	if (ma_sound_start(&impl->sound) == MA_SUCCESS) {
+		impl->playing = true;
+		impl->paused = false;
+	}
 }
 
 void SystemAudio::stop()
 {
-	if (impl->playing || impl->paused) {
-		mciSendStringW(L"stop soundboard", NULL, 0, NULL);
-		mciSendStringW(L"close soundboard", NULL, 0, NULL);
-		impl->playing = false;
-		impl->paused = false;
+	if (impl->soundLoaded) {
+		ma_sound_stop(&impl->sound);
+		ma_sound_uninit(&impl->sound);
+		impl->soundLoaded = false;
 	}
+	impl->playing = false;
+	impl->paused = false;
 	impl->currentPath.clear();
 }
 
 void SystemAudio::pause()
 {
-	if (impl->playing && !impl->paused) {
-		mciSendStringW(L"pause soundboard", NULL, 0, NULL);
+	if (impl->playing && impl->soundLoaded && !impl->paused) {
+		ma_sound_stop(&impl->sound);
 		impl->paused = true;
 		impl->playing = false;
 	}
@@ -88,8 +109,8 @@ void SystemAudio::pause()
 
 void SystemAudio::resume()
 {
-	if (impl->paused) {
-		mciSendStringW(L"resume soundboard", NULL, 0, NULL);
+	if (impl->paused && impl->soundLoaded) {
+		ma_sound_start(&impl->sound);
 		impl->paused = false;
 		impl->playing = true;
 	}
@@ -97,29 +118,33 @@ void SystemAudio::resume()
 
 void SystemAudio::setVolume(float volume)
 {
-	if (impl->playing || impl->paused) {
-		impl->volume = volume;
-		int mciVolume = static_cast<int>(volume * 1000);
-		std::wstring volCmd = L"setaudio soundboard volume to " + std::to_wstring(mciVolume);
-		mciSendStringW(volCmd.c_str(), NULL, 0, NULL);
+	impl->volume = volume;
+	if (impl->soundLoaded) {
+		ma_sound_set_volume(&impl->sound, volume);
 	}
 }
 
 void SystemAudio::seekTo(int64_t timeMs)
 {
-	if (impl->playing || impl->paused) {
-		std::wstring seekCmd = L"seek soundboard to " + std::to_wstring(timeMs);
-		mciSendStringW(seekCmd.c_str(), NULL, 0, NULL);
-		// After seek, MCI stops playback, so we need to resume if was playing
-		if (impl->playing) {
-			mciSendStringW(L"play soundboard", NULL, 0, NULL);
-		}
-	}
+	if (!impl->soundLoaded)
+		return;
+
+	// Get sample rate to convert ms to frames
+	ma_uint32 sampleRate = ma_engine_get_sample_rate(&impl->engine);
+	ma_uint64 frameOffset = (timeMs * sampleRate) / 1000;
+	ma_sound_seek_to_pcm_frame(&impl->sound, frameOffset);
+
+	// If we were playing, ensure we continue (seeking doesn't stop playback in miniaudio)
+	// But if paused, stay paused
 }
 
 bool SystemAudio::isPlaying() const
 {
-	return impl->playing;
+	if (impl->soundLoaded && impl->playing) {
+		// Also check if sound hasn't ended
+		return !ma_sound_at_end(&impl->sound);
+	}
+	return false;
 }
 
 bool SystemAudio::isPaused() const
@@ -129,12 +154,19 @@ bool SystemAudio::isPaused() const
 
 int64_t SystemAudio::currentTime() const
 {
-	if (impl->playing || impl->paused) {
-		wchar_t buffer[128];
-		mciSendStringW(L"status soundboard position", buffer, 128, NULL);
-		return _wtoi64(buffer);
-	}
-	return 0;
+	if (!impl->soundLoaded)
+		return 0;
+
+	ma_uint64 cursor;
+	if (ma_sound_get_cursor_in_pcm_frames(&impl->sound, &cursor) != MA_SUCCESS)
+		return 0;
+
+	// Convert frames to milliseconds
+	ma_uint32 sampleRate = ma_engine_get_sample_rate(&impl->engine);
+	if (sampleRate == 0)
+		return 0;
+
+	return (cursor * 1000) / sampleRate;
 }
 
 #endif // _WIN32
