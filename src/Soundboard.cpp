@@ -980,7 +980,8 @@ void Soundboard::onSystemAudioToggled(bool checked)
 				int64_t currentTimeMs = obs_source_media_get_time(source);
 
 				// Start playback from current position
-				SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(), currentTimeMs);
+				SystemAudio::instance()->play(path, combinedVolume, currentPlayingMedia->loopEnabled(),
+							      currentTimeMs);
 			}
 		}
 	}

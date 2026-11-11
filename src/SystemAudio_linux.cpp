@@ -90,7 +90,7 @@ bool SystemAudio::isVoiceActive(int id) const
 
 void SystemAudio::play(const QString &path, float volume, bool loop, int64_t startTimeMs)
 {
-	Q_UNUSED(loop); // Loop not easily supported with subprocess
+	Q_UNUSED(loop);        // Loop not easily supported with subprocess
 	Q_UNUSED(startTimeMs); // Seek not supported with subprocess
 
 	stop();

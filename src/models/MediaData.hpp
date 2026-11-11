@@ -8,7 +8,7 @@
 /* What a click or long press on a sound does while that sound is already playing.
  * An idle sound always starts playing (except a long press set to Stop). */
 enum SoundAction : int {
-	SoundActionDefault = -1, // per-sound only: use the soundboard-wide default
+	SoundActionDefault = -1,  // per-sound only: use the soundboard-wide default
 	SoundActionPlayAgain = 0, // start another overlapping instance
 	SoundActionRestart = 1,   // stop this sound's instances and start from the beginning
 	SoundActionStop = 2,      // stop all instances of this sound
