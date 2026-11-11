@@ -6,6 +6,7 @@
 
 #include "models/MediaData.hpp"
 
+#include <QComboBox>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QStandardPaths>
@@ -55,6 +56,62 @@ void MediaEdit::setLoopChecked(bool checked)
 bool MediaEdit::loopChecked()
 {
 	return ui->loop->isChecked();
+}
+
+QString MediaEdit::actionName(int action)
+{
+	switch (action) {
+	case SoundActionRestart:
+		return QTStr("Action.Restart");
+	case SoundActionStop:
+		return QTStr("Action.Stop");
+	case SoundActionPlayAgain:
+	default:
+		return QTStr("Action.PlayAgain");
+	}
+}
+
+static void fillActionCombo(QComboBox *combo, int defaultAction)
+{
+	combo->clear();
+	combo->addItem(QTStr("Action.Default").arg(MediaEdit::actionName(defaultAction)), (int)SoundActionDefault);
+	combo->addItem(MediaEdit::actionName(SoundActionPlayAgain), (int)SoundActionPlayAgain);
+	combo->addItem(MediaEdit::actionName(SoundActionRestart), (int)SoundActionRestart);
+	combo->addItem(MediaEdit::actionName(SoundActionStop), (int)SoundActionStop);
+}
+
+static void selectAction(QComboBox *combo, int action)
+{
+	int index = combo->findData(action);
+	combo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+void MediaEdit::setDefaultActions(int defaultClick, int defaultLongPress)
+{
+	fillActionCombo(ui->clickAction, defaultClick);
+	fillActionCombo(ui->longPressAction, defaultLongPress);
+}
+
+void MediaEdit::setClickAction(int action)
+{
+	selectAction(ui->clickAction, action);
+}
+
+int MediaEdit::clickAction()
+{
+	QVariant data = ui->clickAction->currentData();
+	return data.isValid() ? data.toInt() : (int)SoundActionDefault;
+}
+
+void MediaEdit::setLongPressAction(int action)
+{
+	selectAction(ui->longPressAction, action);
+}
+
+int MediaEdit::longPressAction()
+{
+	QVariant data = ui->longPressAction->currentData();
+	return data.isValid() ? data.toInt() : (int)SoundActionDefault;
 }
 
 void MediaEdit::on_browseButton_clicked()

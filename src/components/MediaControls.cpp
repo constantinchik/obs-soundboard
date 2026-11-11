@@ -9,6 +9,25 @@
 
 #define MainStr(str) QString(obs_frontend_get_locale_string(str))
 
+namespace {
+
+/* Before the first sound is played the media source has no file, yet it can still
+ * report "playing"; treat that as idle. */
+obs_media_state EffectiveState(obs_source_t *source)
+{
+	if (!source)
+		return OBS_MEDIA_STATE_NONE;
+
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	const char *file = obs_data_get_string(settings, "local_file");
+	if (!file || !*file)
+		return OBS_MEDIA_STATE_NONE;
+
+	return obs_source_media_get_state(source);
+}
+
+} // namespace
+
 void MediaControls::OBSMediaStopped(void *data, calldata_t *)
 {
 	MediaControls *media = static_cast<MediaControls *>(data);
@@ -50,6 +69,13 @@ MediaControls::MediaControls(QWidget *parent) : QWidget(parent), ui(new Ui::Medi
 	ui->setupUi(this);
 	setFocusPolicy(Qt::StrongFocus);
 
+	// OBS themes pad QPushButtons wide; keep the media buttons compact
+	for (QWidget *button : {ui->playPauseButton, ui->previousButton, ui->stopButton, ui->nextButton})
+		button->setMaximumWidth(30);
+
+	// One button for a soundboard: "stop" while anything plays, "play again" when idle
+	ui->playPauseButton->hide();
+
 	connect(&mediaTimer, &QTimer::timeout, this, &MediaControls::SetSliderPosition);
 	connect(&seekTimer, &QTimer::timeout, this, &MediaControls::SeekTimerCallback);
 	connect(ui->slider, &AbsoluteSlider::sliderPressed, this, &MediaControls::AbsoluteSliderClicked);
@@ -77,7 +103,7 @@ MediaControls::MediaControls(QWidget *parent) : QWidget(parent), ui(new Ui::Medi
 
 	QAction *playPause = new QAction(this);
 	playPause->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-	connect(playPause, &QAction::triggered, this, &MediaControls::on_playPauseButton_clicked);
+	connect(playPause, &QAction::triggered, this, &MediaControls::on_stopButton_clicked);
 	playPause->setShortcut({Qt::Key_Space});
 	addAction(playPause);
 }
@@ -137,14 +163,23 @@ void MediaControls::AbsoluteSliderReleased()
 		return;
 	}
 
-	if (seekTimer.isActive()) {
+	int64_t seekTimeMs = 0;
+	bool wasActive = seekTimer.isActive();
+	if (wasActive) {
 		seekTimer.stop();
+		seekTimeMs = GetSliderTime(seek);
 		if (lastSeek != seek) {
-			obs_source_media_set_time(source, GetSliderTime(seek));
+			obs_source_media_set_time(source, seekTimeMs);
 		}
 
 		UpdateLabels(seek);
 		seek = lastSeek = -1;
+	}
+
+	// Always emit seeked signal when slider was being dragged (timer was active)
+	// This ensures system audio syncs to the final position
+	if (wasActive) {
+		emit seeked(seekTimeMs);
 	}
 
 	if (!prevPaused) {
@@ -183,8 +218,9 @@ void MediaControls::StartMediaTimer()
 	if (isSlideshow)
 		return;
 
+	// Short interval so the time follows playback (and new clicks) closely
 	if (!mediaTimer.isActive())
-		mediaTimer.start(1000);
+		mediaTimer.start(100);
 }
 
 void MediaControls::StopMediaTimer()
@@ -195,6 +231,12 @@ void MediaControls::StopMediaTimer()
 
 void MediaControls::SetPlayingState()
 {
+	// An empty media source can still signal "started"; keep the bar idle then
+	if (!isSlideshow && EffectiveState(OBSGetStrongRef(weakSource)) == OBS_MEDIA_STATE_NONE) {
+		SetRestartState();
+		return;
+	}
+
 	ui->slider->setEnabled(true);
 	ui->playPauseButton->setProperty("class", "icon-media-pause");
 	ui->playPauseButton->style()->unpolish(ui->playPauseButton);
@@ -202,9 +244,20 @@ void MediaControls::SetPlayingState()
 	ui->playPauseButton->setToolTip(MainStr("ContextBar.MediaControls.PauseMedia"));
 
 	prevPaused = false;
+	SetStopButtonPlaying(true);
 
 	UpdateSlideCounter();
 	StartMediaTimer();
+	SetSliderPosition();
+}
+
+void MediaControls::SetStopButtonPlaying(bool playing)
+{
+	ui->stopButton->setProperty("class", playing ? "icon-media-stop" : "icon-media-play");
+	ui->stopButton->style()->unpolish(ui->stopButton);
+	ui->stopButton->style()->polish(ui->stopButton);
+	ui->stopButton->setToolTip(playing ? MainStr("ContextBar.MediaControls.StopMedia")
+					   : MainStr("ContextBar.MediaControls.PlayMedia"));
 }
 
 void MediaControls::SetPausedState()
@@ -223,12 +276,13 @@ void MediaControls::SetRestartState()
 	ui->playPauseButton->style()->unpolish(ui->playPauseButton);
 	ui->playPauseButton->style()->polish(ui->playPauseButton);
 	ui->playPauseButton->setToolTip(MainStr("ContextBar.MediaControls.RestartMedia"));
+	SetStopButtonPlaying(false);
 
 	ui->slider->setValue(0);
 
 	if (!isSlideshow) {
-		ui->timerLabel->setText("--:--:--");
-		ui->durationLabel->setText("--:--:--");
+		ui->timerLabel->setText("-:--");
+		ui->durationLabel->setText("-:--");
 	} else {
 		ui->timerLabel->setText("-");
 		ui->durationLabel->setText("-");
@@ -270,7 +324,7 @@ void MediaControls::RefreshControls()
 	ui->slider->setVisible(!isSlideshow);
 	ui->emptySpaceAgain->setVisible(isSlideshow);
 
-	obs_media_state state = obs_source_media_get_state(source);
+	obs_media_state state = isSlideshow ? obs_source_media_get_state(source) : EffectiveState(source);
 
 	switch (state) {
 	case OBS_MEDIA_STATE_STOPPED:
@@ -279,12 +333,17 @@ void MediaControls::RefreshControls()
 		SetRestartState();
 		break;
 	case OBS_MEDIA_STATE_PLAYING:
+	case OBS_MEDIA_STATE_OPENING:
+	case OBS_MEDIA_STATE_BUFFERING:
+		// A sound that was just clicked may still be opening
 		SetPlayingState();
 		break;
 	case OBS_MEDIA_STATE_PAUSED:
 		SetPausedState();
 		break;
 	default:
+		// e.g. an error state when no sound has been loaded yet: idle
+		SetRestartState();
 		break;
 	}
 
@@ -349,7 +408,10 @@ QString MediaControls::FormatSeconds(int totalSeconds)
 	int minutes = totalMinutes % 60;
 	int hours = totalMinutes / 60;
 
-	return QString::asprintf("%02d:%02d:%02d", hours, minutes, seconds);
+	if (hours > 0)
+		return QString::asprintf("%d:%02d:%02d", hours, minutes, seconds);
+
+	return QString::asprintf("%d:%02d", minutes, seconds);
 }
 
 void MediaControls::on_playPauseButton_clicked()
@@ -382,6 +444,7 @@ void MediaControls::RestartMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_restart(source);
+		emit restartClicked();
 	}
 }
 
@@ -390,6 +453,7 @@ void MediaControls::PlayMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_play_pause(source, false);
+		emit playClicked();
 	}
 }
 
@@ -398,6 +462,7 @@ void MediaControls::PauseMedia()
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
 		obs_source_media_play_pause(source, true);
+		emit pauseClicked();
 	}
 }
 
@@ -427,7 +492,21 @@ void MediaControls::PlaylistPrevious()
 
 void MediaControls::on_stopButton_clicked()
 {
-	StopMedia();
+	OBSSource source = OBSGetStrongRef(weakSource);
+	obs_media_state state = EffectiveState(source);
+
+	switch (state) {
+	case OBS_MEDIA_STATE_PLAYING:
+	case OBS_MEDIA_STATE_PAUSED:
+	case OBS_MEDIA_STATE_OPENING:
+	case OBS_MEDIA_STATE_BUFFERING:
+		StopMedia();
+		emit stopClicked();
+		break;
+	default:
+		emit replayClicked();
+		break;
+	}
 }
 
 void MediaControls::on_nextButton_clicked()
@@ -460,6 +539,7 @@ void MediaControls::MoveSliderFoward(int seconds)
 
 	obs_source_media_set_time(source, ms);
 	SetSliderPosition();
+	emit seeked(ms);
 }
 
 void MediaControls::MoveSliderBackwards(int seconds)
@@ -471,9 +551,12 @@ void MediaControls::MoveSliderBackwards(int seconds)
 
 	int ms = obs_source_media_get_time(source);
 	ms -= seconds * 1000;
+	if (ms < 0)
+		ms = 0;
 
 	obs_source_media_set_time(source, ms);
 	SetSliderPosition();
+	emit seeked(ms);
 }
 
 void MediaControls::UpdateSlideCounter()

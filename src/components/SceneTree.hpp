@@ -7,12 +7,14 @@
 
 class SceneTree : public QListWidget {
 	Q_OBJECT
-	Q_PROPERTY(int gridItemWidth READ GetGridItemWidth WRITE SetGridItemWidth DESIGNABLE true)
-	Q_PROPERTY(int gridItemHeight READ GetGridItemHeight WRITE SetGridItemHeight DESIGNABLE true)
+	/* No gridItemWidth/gridItemHeight Q_PROPERTYs on purpose: OBS themes set
+	 * qproperty-gridItemHeight on every "SceneTree" (meant for the Scenes dock),
+	 * which would squash the soundboard tiles back to 24px. */
 
 	bool gridMode = false;
 	int maxWidth = 150;
 	int itemHeight = 24;
+	QString placeholderText;
 
 public:
 	void SetGridMode(bool grid);
@@ -23,6 +25,8 @@ public:
 	int GetGridItemWidth();
 	int GetGridItemHeight();
 
+	void SetPlaceholderText(const QString &text);
+
 	explicit SceneTree(QWidget *parent = nullptr);
 
 private:
@@ -31,6 +35,7 @@ private:
 protected:
 	virtual bool eventFilter(QObject *obj, QEvent *event) override;
 	virtual void resizeEvent(QResizeEvent *event) override;
+	virtual void paintEvent(QPaintEvent *event) override;
 	virtual void startDrag(Qt::DropActions supportedActions) override;
 	virtual void dropEvent(QDropEvent *event) override;
 	virtual void dragMoveEvent(QDragMoveEvent *event) override;
