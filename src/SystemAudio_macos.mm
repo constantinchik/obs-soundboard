@@ -4,6 +4,15 @@
 
 #import <AVFoundation/AVFoundation.h>
 
+#include <map>
+#include <vector>
+
+struct SystemAudioVoice {
+	AVPlayer *player = nil;
+	id endObserver = nil;
+	bool looping = false;
+};
+
 struct SystemAudio::Impl {
 	AVPlayer *player = nil;
 	AVPlayerItem *playerItem = nil;
@@ -11,6 +20,9 @@ struct SystemAudio::Impl {
 	bool looping = false;
 	bool paused = false;
 	float volume = 1.0f;
+
+	int nextVoiceId = 1;
+	std::map<int, SystemAudioVoice> voices;
 };
 
 SystemAudio *SystemAudio::instance()
@@ -27,7 +39,84 @@ SystemAudio::SystemAudio()
 SystemAudio::~SystemAudio()
 {
 	stop();
+	stopAllVoices();
 	delete impl;
+}
+
+int SystemAudio::playVoice(const QString &path, float volume, bool loop)
+{
+	NSString *nsPath = [NSString stringWithUTF8String:path.toUtf8().constData()];
+	NSURL *url = [NSURL fileURLWithPath:nsPath];
+
+	AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
+	AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
+	if (!player)
+		return -1;
+
+	player.volume = volume;
+
+	SystemAudioVoice voice;
+	voice.player = player;
+	voice.looping = loop;
+
+	if (loop) {
+		player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
+		__weak AVPlayer *weakPlayer = player;
+		voice.endObserver =
+			[[NSNotificationCenter defaultCenter] addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+									  object:item
+									   queue:nil
+								      usingBlock:^(NSNotification *) {
+									      AVPlayer *strongPlayer = weakPlayer;
+									      [strongPlayer seekToTime:kCMTimeZero];
+									      [strongPlayer play];
+								      }];
+	}
+
+	[player play];
+
+	int voiceId = impl->nextVoiceId++;
+	impl->voices[voiceId] = voice;
+	return voiceId;
+}
+
+void SystemAudio::stopVoice(int voiceId)
+{
+	auto it = impl->voices.find(voiceId);
+	if (it == impl->voices.end())
+		return;
+
+	[it->second.player pause];
+	if (it->second.endObserver)
+		[[NSNotificationCenter defaultCenter] removeObserver:it->second.endObserver];
+
+	impl->voices.erase(it);
+}
+
+void SystemAudio::stopAllVoices()
+{
+	std::vector<int> ids;
+	for (auto &pair : impl->voices)
+		ids.push_back(pair.first);
+
+	for (int voiceId : ids)
+		stopVoice(voiceId);
+}
+
+void SystemAudio::setVoiceVolume(int voiceId, float volume)
+{
+	auto it = impl->voices.find(voiceId);
+	if (it != impl->voices.end())
+		it->second.player.volume = volume;
+}
+
+bool SystemAudio::isVoiceActive(int voiceId) const
+{
+	auto it = impl->voices.find(voiceId);
+	if (it == impl->voices.end())
+		return false;
+
+	return it->second.looping || it->second.player.rate > 0;
 }
 
 void SystemAudio::play(const QString &path, float volume, bool loop, int64_t startTimeMs)

@@ -28,6 +28,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QObject>
 #include <QToolButton>
 
@@ -104,6 +105,9 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	connect(&progressTimer, &QTimer::timeout, this, &Soundboard::updatePlayingTile);
 
 	connect(ui->addButton, &QToolButton::clicked, ui->actionAdd, &QAction::trigger);
+
+	// Clicks and long presses on tiles are detected here instead of itemClicked
+	ui->list->viewport()->installEventFilter(this);
 
 	renameMedia = new QAction(MainStr("Rename"), this);
 	renameMedia->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -183,6 +187,17 @@ void Soundboard::onVolumeChanged(void *data, calldata_t *cd)
 
 void Soundboard::updateSystemAudioVolume()
 {
+	// Keep overlapping voices in line with the main source's mixer volume
+	for (auto &voice : voices) {
+		syncVoiceSettings(voice->source);
+
+		if (voice->systemVoice >= 0) {
+			MediaObj *obj = MediaObj::findByUUID(voice->uuid);
+			if (obj)
+				SystemAudio::instance()->setVoiceVolume(voice->systemVoice, voiceVolume(obj));
+		}
+	}
+
 	if (!systemAudioEnabled || !currentPlayingMedia)
 		return;
 
@@ -198,7 +213,9 @@ void Soundboard::updateSystemAudioVolume()
 
 void Soundboard::onMediaStopClicked()
 {
+	// The bar's stop button stops everything, including overlapping voices
 	SystemAudio::instance()->stop();
+	stopAllVoices();
 	currentPlayingMedia = nullptr;
 	updatePlayingTile();
 }
@@ -266,6 +283,8 @@ OBSDataArray Soundboard::saveMedia()
 		obs_data_set_string(settings, "path", QT_TO_UTF8(obj->getPath()));
 		obs_data_set_bool(settings, "loop", obj->loopEnabled());
 		obs_data_set_double(settings, "volume", (double)obj->getVolume());
+		obs_data_set_int(settings, "click_action", obj->getClickAction());
+		obs_data_set_int(settings, "long_press_action", obj->getLongPressAction());
 
 		OBSDataArrayAutoRelease hotkeyArray = obs_hotkey_save(obj->getHotkey());
 		obs_data_set_array(settings, "sound_hotkey", hotkeyArray);
@@ -283,6 +302,8 @@ void Soundboard::loadMedia(OBSDataArray array)
 
 		obs_data_set_default_string(settings, "name", obs_module_text("Sound"));
 		obs_data_set_default_double(settings, "volume", 1.0);
+		obs_data_set_default_int(settings, "click_action", SoundActionDefault);
+		obs_data_set_default_int(settings, "long_press_action", SoundActionDefault);
 
 		QString name = obs_data_get_string(settings, "name");
 		QString path = obs_data_get_string(settings, "path");
@@ -295,7 +316,11 @@ void Soundboard::loadMedia(OBSDataArray array)
 		obs_hotkey_load(obj->getHotkey(), hotkeyArray);
 		obj->setLoopEnabled(loop);
 		obj->setVolume(volume);
+		obj->setClickAction((int)obs_data_get_int(settings, "click_action"));
+		obj->setLongPressAction((int)obs_data_get_int(settings, "long_press_action"));
 	}
+
+	updateAllItemDecorations();
 }
 
 void Soundboard::save(OBSData saveData)
@@ -324,6 +349,8 @@ void Soundboard::save(OBSData saveData)
 
 	obs_data_set_bool(saveData, "use_countdown", ui->mediaControls->countDownTimer);
 	obs_data_set_bool(saveData, "system_audio_enabled", systemAudioEnabled);
+	obs_data_set_int(saveData, "default_click_action", defaultClickAction);
+	obs_data_set_int(saveData, "default_long_press_action", defaultLongPressAction);
 }
 
 void Soundboard::loadSource(OBSData saveData)
@@ -348,6 +375,11 @@ void Soundboard::load(OBSData saveData)
 	QDockWidget *dock = window->findChild<QDockWidget *>("SoundboardDock");
 
 	loadSource(saveData);
+
+	obs_data_set_default_int(saveData, "default_click_action", SoundActionPlayAgain);
+	obs_data_set_default_int(saveData, "default_long_press_action", SoundActionStop);
+	defaultClickAction = (int)obs_data_get_int(saveData, "default_click_action");
+	defaultLongPressAction = (int)obs_data_get_int(saveData, "default_long_press_action");
 
 	OBSDataArrayAutoRelease array = obs_data_get_array(saveData, "soundboard_array");
 	loadMedia(array.Get());
@@ -411,6 +443,10 @@ void Soundboard::clear()
 	volumeSignal.Disconnect();
 	source = nullptr;
 
+	stopAllVoices();
+	presses.clear();
+	mousePressUuid.clear();
+
 	SystemAudio::instance()->stop();
 	setSystemAudioEnabled(false);
 	currentPlayingMedia = nullptr;
@@ -442,37 +478,434 @@ void Soundboard::startProgressTracking()
 	updatePlayingTile();
 }
 
-void Soundboard::updatePlayingTile()
+namespace {
+
+constexpr int startGraceMs = 1000; // a just-started source may not report "playing" yet
+constexpr int longPressMs = 500;
+constexpr int firstVoiceChannel = 62; // channel 63 is the main soundboard source
+constexpr int lastVoiceChannel = 40;
+
+bool isActiveState(obs_media_state state)
 {
-	QListWidgetItem *playingItem = nullptr;
-	double progress = 0.0;
-	bool active = false;
+	return state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED ||
+	       state == OBS_MEDIA_STATE_OPENING || state == OBS_MEDIA_STATE_BUFFERING;
+}
 
-	if (currentPlayingMedia && !obs_obj_invalid(source)) {
-		obs_media_state state = obs_source_media_get_state(source);
+double sourceProgress(obs_source_t *src)
+{
+	obs_media_state state = obs_source_media_get_state(src);
+	if (state != OBS_MEDIA_STATE_PLAYING && state != OBS_MEDIA_STATE_PAUSED)
+		return 0.0;
 
-		active = state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED ||
-			 state == OBS_MEDIA_STATE_OPENING || state == OBS_MEDIA_STATE_BUFFERING;
+	int64_t duration = obs_source_media_get_duration(src);
+	int64_t time = obs_source_media_get_time(src);
+	return duration > 0 ? (double)time / (double)duration : 0.0;
+}
 
-		// Right after a click the source may not have started yet
-		if (!active && playStarted.isValid() && playStarted.elapsed() < 1000)
-			active = true;
+} // namespace
 
-		if (active) {
-			playingItem = findItem(currentPlayingMedia);
+bool Soundboard::isMainBusy()
+{
+	if (!currentPlayingMedia || obs_obj_invalid(source))
+		return false;
 
-			int64_t duration = obs_source_media_get_duration(source);
-			int64_t time = obs_source_media_get_time(source);
+	if (isActiveState(obs_source_media_get_state(source)))
+		return true;
 
-			if (duration > 0 && (state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED))
-				progress = (double)time / (double)duration;
+	return mainStarted.isValid() && mainStarted.elapsed() < startGraceMs;
+}
+
+bool Soundboard::isMainPlaying(MediaObj *obj)
+{
+	return obj && currentPlayingMedia == obj && isMainBusy();
+}
+
+bool Soundboard::isSoundPlaying(MediaObj *obj)
+{
+	if (isMainPlaying(obj))
+		return true;
+
+	QString uuid = obj->getUUID();
+	for (auto &voice : voices) {
+		if (voice->uuid == uuid)
+			return true;
+	}
+
+	return false;
+}
+
+float Soundboard::voiceVolume(MediaObj *obj)
+{
+	float sourceVolume = obs_obj_invalid(source) ? 1.0f : obs_source_get_volume(source);
+	return obj->getVolume() * sourceVolume;
+}
+
+void Soundboard::syncVoiceSettings(obs_source_t *voice)
+{
+	if (!voice || obs_obj_invalid(source))
+		return;
+
+	obs_source_set_volume(voice, obs_source_get_volume(source));
+	obs_source_set_muted(voice, obs_source_muted(source));
+	obs_source_set_balance_value(voice, obs_source_get_balance_value(source));
+	obs_source_set_audio_mixers(voice, obs_source_get_audio_mixers(source));
+
+	obs_monitoring_type monitoring = obs_source_get_monitoring_type(source);
+	if (obs_source_get_monitoring_type(voice) != monitoring)
+		obs_source_set_monitoring_type(voice, monitoring);
+}
+
+void Soundboard::spawnVoice(MediaObj *obj)
+{
+	int channel = -1;
+
+	for (int attempt = 0; attempt < 2 && channel < 0; attempt++) {
+		for (int ch = firstVoiceChannel; ch >= lastVoiceChannel; ch--) {
+			OBSSourceAutoRelease existing = obs_get_output_source((uint32_t)ch);
+			if (!existing) {
+				channel = ch;
+				break;
+			}
+		}
+
+		// Every channel taken: drop the oldest voice and try again
+		if (channel < 0 && !voices.empty()) {
+			releaseVoice(*voices.front());
+			voices.erase(voices.begin());
 		}
 	}
 
+	if (channel < 0) {
+		blog(LOG_WARNING, "[Soundboard] No free output channel for an overlapping sound");
+		return;
+	}
+
+	QString path = obj->getPath();
+
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_bool(settings, "looping", obj->loopEnabled());
+	obs_data_set_string(settings, "local_file", QT_TO_UTF8(path));
+	obs_data_set_bool(settings, "is_local_file", true);
+
+	auto voice = std::make_unique<Voice>();
+	voice->uuid = obj->getUUID();
+	voice->source = obs_source_create_private("ffmpeg_source", "Soundboard voice", settings);
+
+	if (obs_obj_invalid(voice->source))
+		return;
+
+	syncVoiceSettings(voice->source);
+	if (!obs_obj_invalid(source))
+		obs_source_copy_filters(voice->source, source);
+
+	voice->channel = channel;
+	obs_set_output_source((uint32_t)channel, voice->source);
+
+	if (systemAudioEnabled)
+		voice->systemVoice = SystemAudio::instance()->playVoice(path, voiceVolume(obj), obj->loopEnabled());
+
+	voice->seq = ++playSeq;
+	voice->started.start();
+	voices.push_back(std::move(voice));
+
+	startProgressTracking();
+}
+
+void Soundboard::releaseVoice(Voice &voice)
+{
+	if (voice.channel >= 0) {
+		OBSSourceAutoRelease current = obs_get_output_source((uint32_t)voice.channel);
+		if (current.Get() == voice.source.Get())
+			obs_set_output_source((uint32_t)voice.channel, nullptr);
+		voice.channel = -1;
+	}
+
+	if (voice.systemVoice >= 0) {
+		SystemAudio::instance()->stopVoice(voice.systemVoice);
+		voice.systemVoice = -1;
+	}
+
+	voice.source = nullptr;
+}
+
+void Soundboard::stopVoicesOf(const QString &uuid)
+{
+	for (auto it = voices.begin(); it != voices.end();) {
+		if ((*it)->uuid == uuid) {
+			releaseVoice(**it);
+			it = voices.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+void Soundboard::stopAllVoices()
+{
+	for (auto &voice : voices)
+		releaseVoice(*voice);
+
+	voices.clear();
+	SystemAudio::instance()->stopAllVoices();
+}
+
+void Soundboard::cleanupFinishedVoices()
+{
+	for (auto it = voices.begin(); it != voices.end();) {
+		Voice &voice = **it;
+		bool active = !obs_obj_invalid(voice.source) && isActiveState(obs_source_media_get_state(voice.source));
+
+		if (!active && voice.started.elapsed() < startGraceMs)
+			active = true;
+
+		if (!active) {
+			releaseVoice(voice);
+			it = voices.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+void Soundboard::stopSound(MediaObj *obj)
+{
+	stopVoicesOf(obj->getUUID());
+
+	if (isMainPlaying(obj)) {
+		obs_source_media_stop(source);
+		SystemAudio::instance()->stop();
+		currentPlayingMedia = nullptr;
+	}
+
+	updatePlayingTile();
+}
+
+void Soundboard::playNew(MediaObj *obj)
+{
+	// The main source (with the media bar) is used whenever it's free;
+	// overlapping sounds get their own temporary voice.
+	if (!isMainBusy())
+		play(obj);
+	else
+		spawnVoice(obj);
+}
+
+int Soundboard::effectiveClickAction(MediaObj *obj)
+{
+	int action = obj->getClickAction();
+	return action == SoundActionDefault ? defaultClickAction : action;
+}
+
+int Soundboard::effectiveLongPressAction(MediaObj *obj)
+{
+	int action = obj->getLongPressAction();
+	return action == SoundActionDefault ? defaultLongPressAction : action;
+}
+
+void Soundboard::performAction(MediaObj *obj, int action, bool longPress)
+{
+	if (!obj)
+		return;
+
+	cleanupFinishedVoices();
+
+	if (!isSoundPlaying(obj)) {
+		// An idle sound always starts, except a long press that means "stop"
+		if (!(longPress && action == SoundActionStop))
+			playNew(obj);
+		return;
+	}
+
+	switch (action) {
+	case SoundActionRestart: {
+		bool inMain = isMainPlaying(obj);
+		stopVoicesOf(obj->getUUID());
+
+		if (inMain)
+			play(obj); // same file in the main source: restarts it
+		else
+			playNew(obj);
+		break;
+	}
+	case SoundActionStop:
+		stopSound(obj);
+		break;
+	case SoundActionPlayAgain:
+	default:
+		playNew(obj);
+		break;
+	}
+}
+
+void Soundboard::beginPress(const QString &uuid)
+{
+	quint64 token = ++pressToken;
+	presses[uuid] = PressState{token, false};
+
+	QTimer::singleShot(longPressMs, this, [this, uuid, token]() {
+		auto it = presses.find(uuid);
+		if (it == presses.end() || it->token != token)
+			return;
+
+		it->longFired = true;
+
+		MediaObj *obj = MediaObj::findByUUID(uuid);
+		if (obj)
+			performAction(obj, effectiveLongPressAction(obj), true);
+	});
+}
+
+void Soundboard::endPress(const QString &uuid, bool fireClick)
+{
+	auto it = presses.find(uuid);
+	if (it == presses.end())
+		return;
+
+	bool longFired = it->longFired;
+	presses.erase(it);
+
+	if (longFired || !fireClick)
+		return;
+
+	MediaObj *obj = MediaObj::findByUUID(uuid);
+	if (obj)
+		performAction(obj, effectiveClickAction(obj), false);
+}
+
+void Soundboard::cancelPress(const QString &uuid)
+{
+	presses.remove(uuid);
+}
+
+void Soundboard::onSoundHotkeyPressed(MediaObj *obj)
+{
+	beginPress(obj->getUUID());
+}
+
+void Soundboard::onSoundHotkeyReleased(MediaObj *obj)
+{
+	endPress(obj->getUUID(), true);
+}
+
+bool Soundboard::eventFilter(QObject *watched, QEvent *event)
+{
+	if (watched != ui->list->viewport())
+		return QWidget::eventFilter(watched, event);
+
+	switch (event->type()) {
+	case QEvent::MouseButtonPress:
+	case QEvent::MouseButtonDblClick: {
+		// Qt delivers the second click of a fast double click as DblClick
+		QMouseEvent *me = static_cast<QMouseEvent *>(event);
+		if (me->button() != Qt::LeftButton)
+			break;
+
+		if (!mousePressUuid.isEmpty())
+			cancelPress(mousePressUuid);
+		mousePressUuid.clear();
+
+		QPoint pos = me->position().toPoint();
+		QListWidgetItem *item = ui->list->itemAt(pos);
+
+		if (item) {
+			mousePressUuid = item->data(Qt::UserRole).toString();
+			mousePressPos = pos;
+			beginPress(mousePressUuid);
+		}
+		break;
+	}
+	case QEvent::MouseMove: {
+		if (mousePressUuid.isEmpty())
+			break;
+
+		// Moving far enough starts a drag to reorder; that's not a click
+		QMouseEvent *me = static_cast<QMouseEvent *>(event);
+		if ((me->position().toPoint() - mousePressPos).manhattanLength() >= QApplication::startDragDistance()) {
+			cancelPress(mousePressUuid);
+			mousePressUuid.clear();
+		}
+		break;
+	}
+	case QEvent::MouseButtonRelease: {
+		QMouseEvent *me = static_cast<QMouseEvent *>(event);
+		if (me->button() != Qt::LeftButton || mousePressUuid.isEmpty())
+			break;
+
+		QListWidgetItem *item = ui->list->itemAt(me->position().toPoint());
+		bool sameTile = item && item->data(Qt::UserRole).toString() == mousePressUuid;
+
+		QString uuid = mousePressUuid;
+		mousePressUuid.clear();
+		endPress(uuid, sameTile);
+		break;
+	}
+	default:
+		break;
+	}
+
+	return QWidget::eventFilter(watched, event);
+}
+
+void Soundboard::updateItemDecorations(QListWidgetItem *item, MediaObj *obj)
+{
+	if (!item || !obj)
+		return;
+
+	int click = obj->getClickAction();
+	int longPress = obj->getLongPressAction();
+	bool overridden = click != SoundActionDefault || longPress != SoundActionDefault;
+
+	QString tooltip = obj->getName();
+	if (click != SoundActionDefault)
+		tooltip += "\n" + QTStr("ClickAction") + ": " + MediaEdit::actionName(click);
+	if (longPress != SoundActionDefault)
+		tooltip += "\n" + QTStr("LongPressAction") + ": " + MediaEdit::actionName(longPress);
+
+	item->setToolTip(tooltip);
+
+	if (item->data(SoundTileDelegate::OverrideRole).toBool() != overridden)
+		item->setData(SoundTileDelegate::OverrideRole, overridden);
+}
+
+void Soundboard::updateAllItemDecorations()
+{
 	for (int i = 0; i < ui->list->count(); i++) {
 		QListWidgetItem *item = ui->list->item(i);
-		bool isPlaying = item == playingItem;
-		double itemProgress = isPlaying ? progress : 0.0;
+		updateItemDecorations(item, MediaObj::findByUUID(item->data(Qt::UserRole).toString()));
+	}
+}
+
+void Soundboard::updatePlayingTile()
+{
+	cleanupFinishedVoices();
+
+	const bool mainBusy = isMainBusy();
+	const QString mainUuid = (mainBusy && currentPlayingMedia) ? currentPlayingMedia->getUUID() : QString();
+
+	for (int i = 0; i < ui->list->count(); i++) {
+		QListWidgetItem *item = ui->list->item(i);
+		QString uuid = item->data(Qt::UserRole).toString();
+
+		// Show the most recently started instance of this sound
+		obs_source_t *latest = nullptr;
+		quint64 latestSeq = 0;
+		bool isPlaying = false;
+
+		if (mainBusy && uuid == mainUuid) {
+			latest = source;
+			latestSeq = mainSeq;
+			isPlaying = true;
+		}
+
+		for (auto &voice : voices) {
+			if (voice->uuid == uuid && voice->seq >= latestSeq) {
+				latest = voice->source;
+				latestSeq = voice->seq;
+				isPlaying = true;
+			}
+		}
+
+		double itemProgress = (isPlaying && latest) ? sourceProgress(latest) : 0.0;
 
 		if (item->data(SoundTileDelegate::PlayingRole).toBool() != isPlaying)
 			item->setData(SoundTileDelegate::PlayingRole, isPlaying);
@@ -481,7 +914,7 @@ void Soundboard::updatePlayingTile()
 			item->setData(SoundTileDelegate::ProgressRole, itemProgress);
 	}
 
-	if (!active)
+	if (!mainBusy && voices.empty())
 		progressTimer.stop();
 }
 
@@ -492,6 +925,8 @@ void Soundboard::play(MediaObj *obj)
 
 	QString path = obj->getPath();
 	currentPlayingMedia = obj;
+	mainSeq = ++playSeq;
+	mainStarted.start();
 	startProgressTracking();
 
 	// Calculate combined volume: per-sound volume × source mixer volume
@@ -530,6 +965,9 @@ void Soundboard::onSystemAudioToggled(bool checked)
 
 	if (!systemAudioEnabled) {
 		SystemAudio::instance()->stop();
+		SystemAudio::instance()->stopAllVoices();
+		for (auto &voice : voices)
+			voice->systemVoice = -1;
 	} else {
 		// If monitoring was just enabled and OBS is playing, sync system audio
 		if (currentPlayingMedia && !obs_obj_invalid(source)) {
@@ -554,7 +992,7 @@ void Soundboard::itemRenamed(MediaObj *obj)
 
 	if (item) {
 		item->setText(obj->getName());
-		item->setToolTip(obj->getName());
+		updateItemDecorations(item, obj);
 	}
 }
 
@@ -566,11 +1004,12 @@ MediaObj *Soundboard::add(const QString &name_, const QString &path)
 
 	QListWidgetItem *item = new QListWidgetItem(name);
 	item->setData(Qt::UserRole, obj->getUUID());
-	item->setToolTip(name);
 	ui->list->addItem(item);
 	ui->list->setCurrentItem(item);
+	updateItemDecorations(item, obj);
 
-	connect(obj, &MediaObj::hotkeyPressed, this, &Soundboard::play);
+	connect(obj, &MediaObj::hotkeyPressed, this, &Soundboard::onSoundHotkeyPressed);
+	connect(obj, &MediaObj::hotkeyReleased, this, &Soundboard::onSoundHotkeyReleased);
 	connect(obj, &MediaObj::renamed, this, &Soundboard::itemRenamed);
 
 	updateActions();
@@ -589,11 +1028,15 @@ void Soundboard::on_actionAdd_triggered()
 
 		MediaObj *obj = add(name, path);
 		obj->setLoopEnabled(loop);
+		obj->setClickAction(edit.clickAction());
+		obj->setLongPressAction(edit.longPressAction());
+		updateItemDecorations(findItem(obj), obj);
 	};
 
 	connect(&edit, &QDialog::accepted, this, added);
 
 	edit.setName(getDefaultString());
+	edit.setDefaultActions(defaultClickAction, defaultLongPressAction);
 	edit.exec();
 }
 
@@ -614,6 +1057,9 @@ void Soundboard::on_actionEdit_triggered()
 		obj->setName(name);
 		obj->setPath(path);
 		obj->setLoopEnabled(loop);
+		obj->setClickAction(edit.clickAction());
+		obj->setLongPressAction(edit.longPressAction());
+		updateItemDecorations(findItem(obj), obj);
 	};
 
 	connect(&edit, &QDialog::accepted, this, edited);
@@ -621,14 +1067,12 @@ void Soundboard::on_actionEdit_triggered()
 	edit.setName(obj->getName());
 	edit.setPath(obj->getPath());
 	edit.setLoopChecked(obj->loopEnabled());
+	edit.setDefaultActions(defaultClickAction, defaultLongPressAction);
+	edit.setClickAction(obj->getClickAction());
+	edit.setLongPressAction(obj->getLongPressAction());
 	edit.exec();
 
 	prevPath = "";
-}
-
-void Soundboard::on_list_itemClicked()
-{
-	play(getCurrentMediaObj());
 }
 
 void Soundboard::updateActions()
@@ -663,6 +1107,9 @@ void Soundboard::on_actionRemove_triggered()
 	if (obj == currentPlayingMedia)
 		currentPlayingMedia = nullptr;
 
+	stopVoicesOf(obj->getUUID());
+	presses.remove(obj->getUUID());
+
 	QListWidgetItem *item = findItem(obj);
 	delete ui->list->takeItem(ui->list->row(item));
 	obj->deleteLater();
@@ -682,6 +1129,10 @@ void Soundboard::on_actionDuplicate_triggered()
 	bool loop = obj->loopEnabled();
 	MediaObj *newObj = add(name, path);
 	newObj->setLoopEnabled(loop);
+	newObj->setVolume(obj->getVolume());
+	newObj->setClickAction(obj->getClickAction());
+	newObj->setLongPressAction(obj->getLongPressAction());
+	updateItemDecorations(findItem(newObj), newObj);
 }
 
 void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
@@ -719,6 +1170,31 @@ void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
 		listAction->setChecked(true);
 
 	popup.addMenu(&subMenu);
+
+	// Soundboard-wide defaults; tiles can override them in their properties
+	const int actions[] = {SoundActionPlayAgain, SoundActionRestart, SoundActionStop};
+
+	QMenu clickMenu(QTStr("DefaultClickAction"));
+	QMenu longPressMenu(QTStr("DefaultLongPressAction"));
+
+	for (int action : actions) {
+		QAction *clickItem = clickMenu.addAction(MediaEdit::actionName(action), this, [this, action]() {
+			defaultClickAction = action;
+			updateAllItemDecorations();
+		});
+		clickItem->setCheckable(true);
+		clickItem->setChecked(defaultClickAction == action);
+
+		QAction *longItem = longPressMenu.addAction(MediaEdit::actionName(action), this, [this, action]() {
+			defaultLongPressAction = action;
+			updateAllItemDecorations();
+		});
+		longItem->setCheckable(true);
+		longItem->setChecked(defaultLongPressAction == action);
+	}
+
+	popup.addMenu(&clickMenu);
+	popup.addMenu(&longPressMenu);
 
 	popup.exec(QCursor::pos());
 }

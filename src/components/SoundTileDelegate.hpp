@@ -14,6 +14,7 @@ public:
 	enum Role {
 		ProgressRole = Qt::UserRole + 1, // double 0..1
 		PlayingRole = Qt::UserRole + 2,  // bool
+		OverrideRole = Qt::UserRole + 3, // bool: tile overrides the default click/long-press action
 	};
 
 	explicit SoundTileDelegate(SceneTree *view);

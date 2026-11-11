@@ -22,6 +22,14 @@ public:
 	bool isPaused() const;
 	int64_t currentTime() const;
 
+	// Extra, independent playbacks that can overlap the main one and each other.
+	// playVoice returns an id (or -1 on failure); finished voices report inactive.
+	int playVoice(const QString &path, float volume, bool loop);
+	void stopVoice(int id);
+	void stopAllVoices();
+	void setVoiceVolume(int id, float volume);
+	bool isVoiceActive(int id) const;
+
 private:
 	SystemAudio();
 	~SystemAudio();

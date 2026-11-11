@@ -143,6 +143,16 @@ void SoundTileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 		painter->drawRoundedRect(tile.adjusted(inset, inset, -inset, -inset), tileRadius, tileRadius);
 	}
 
+	/* Subtle marker: this tile overrides the default click / long-press action */
+	if (index.data(OverrideRole).toBool()) {
+		QColor dot = textColor;
+		dot.setAlphaF(0.45f);
+		const qreal r = 2.5;
+		painter->setPen(Qt::NoPen);
+		painter->setBrush(dot);
+		painter->drawEllipse(QPointF(tile.right() - 7.0, tile.top() + 7.0), r, r);
+	}
+
 	/* Icon and label */
 	QString icon, label;
 	const bool emoji = splitName(index.data(Qt::DisplayRole).toString(), icon, label);

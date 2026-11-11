@@ -7,12 +7,34 @@
 
 #pragma comment(lib, "winmm.lib")
 
+#include <set>
+#include <string>
+
 struct SystemAudio::Impl {
 	QString currentPath;
 	bool playing = false;
 	bool paused = false;
 	float volume = 1.0f;
+
+	int nextVoiceId = 1;
+	std::set<int> voices;
 };
+
+namespace {
+
+std::wstring voiceAlias(int id)
+{
+	return L"sbvoice" + std::to_wstring(id);
+}
+
+void setMciVolume(const std::wstring &alias, float volume)
+{
+	int mciVolume = static_cast<int>(volume * 1000);
+	std::wstring volCmd = L"setaudio " + alias + L" volume to " + std::to_wstring(mciVolume);
+	mciSendStringW(volCmd.c_str(), NULL, 0, NULL);
+}
+
+} // namespace
 
 SystemAudio *SystemAudio::instance()
 {
@@ -28,7 +50,68 @@ SystemAudio::SystemAudio()
 SystemAudio::~SystemAudio()
 {
 	stop();
+	stopAllVoices();
 	delete impl;
+}
+
+int SystemAudio::playVoice(const QString &path, float volume, bool loop)
+{
+	int id = impl->nextVoiceId++;
+	std::wstring alias = voiceAlias(id);
+	std::wstring wpath = path.toStdWString();
+
+	std::wstring openCmd = L"open \"" + wpath + L"\" type mpegvideo alias " + alias;
+	if (mciSendStringW(openCmd.c_str(), NULL, 0, NULL) != 0) {
+		openCmd = L"open \"" + wpath + L"\" type waveaudio alias " + alias;
+		if (mciSendStringW(openCmd.c_str(), NULL, 0, NULL) != 0)
+			return -1;
+	}
+
+	setMciVolume(alias, volume);
+
+	std::wstring playCmd = L"play " + alias + (loop ? L" repeat" : L"");
+	mciSendStringW(playCmd.c_str(), NULL, 0, NULL);
+
+	impl->voices.insert(id);
+	return id;
+}
+
+void SystemAudio::stopVoice(int id)
+{
+	auto it = impl->voices.find(id);
+	if (it == impl->voices.end())
+		return;
+
+	std::wstring alias = voiceAlias(id);
+	mciSendStringW((L"stop " + alias).c_str(), NULL, 0, NULL);
+	mciSendStringW((L"close " + alias).c_str(), NULL, 0, NULL);
+	impl->voices.erase(it);
+}
+
+void SystemAudio::stopAllVoices()
+{
+	std::set<int> ids = impl->voices;
+	for (int id : ids)
+		stopVoice(id);
+}
+
+void SystemAudio::setVoiceVolume(int id, float volume)
+{
+	if (impl->voices.count(id))
+		setMciVolume(voiceAlias(id), volume);
+}
+
+bool SystemAudio::isVoiceActive(int id) const
+{
+	if (!impl->voices.count(id))
+		return false;
+
+	wchar_t buffer[64] = {};
+	std::wstring cmd = L"status " + voiceAlias(id) + L" mode";
+	if (mciSendStringW(cmd.c_str(), buffer, 64, NULL) != 0)
+		return false;
+
+	return std::wstring(buffer) == L"playing";
 }
 
 void SystemAudio::play(const QString &path, float volume, bool loop, int64_t startTimeMs)

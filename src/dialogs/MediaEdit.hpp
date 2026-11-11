@@ -29,4 +29,15 @@ public:
 
 	void setLoopChecked(bool checked);
 	bool loopChecked();
+
+	// Fills both action combos; the "Default" entry names the current global default.
+	void setDefaultActions(int defaultClick, int defaultLongPress);
+
+	void setClickAction(int action);
+	int clickAction();
+
+	void setLongPressAction(int action);
+	int longPressAction();
+
+	static QString actionName(int action);
 };
