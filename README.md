@@ -4,17 +4,13 @@ OBS Studio plugin that adds a soundboard dock, so you can trigger sounds while s
 
 ## Download
 
-Get the latest version from the **[Releases page](https://github.com/constantinchik/obs-soundboard/releases/latest)**.
+Download the plugin from the **[Releases page](https://github.com/constantinchik/obs-soundboard/releases/latest)**. Each release has a package for every platform:
 
-Direct links for **v0.1**:
-
-| Platform | Download |
+| Platform | File to download |
 | --- | --- |
-| Windows (installer) | [obs-soundboard-0.1.0-windows-x64-Installer.exe](https://github.com/constantinchik/obs-soundboard/releases/download/0.1.0/obs-soundboard-0.1.0-windows-x64-Installer.exe) |
-| Windows (zip, extract into your OBS folder) | [obs-soundboard-0.1.0-windows-x64.zip](https://github.com/constantinchik/obs-soundboard/releases/download/0.1.0/obs-soundboard-0.1.0-windows-x64.zip) |
-| Windows (portable OBS) | [obs-soundboard-0.1.0-windows-x64-Portable.zip](https://github.com/constantinchik/obs-soundboard/releases/download/0.1.0/obs-soundboard-0.1.0-windows-x64-Portable.zip) |
-| macOS (Apple Silicon and Intel) | [obs-soundboard-0.1.0-macos-universal.pkg](https://github.com/constantinchik/obs-soundboard/releases/download/0.1.0/obs-soundboard-0.1.0-macos-universal.pkg) |
-| Ubuntu 24.04 (x86_64) | [obs-soundboard-0.1.0-x86_64-linux-gnu.deb](https://github.com/constantinchik/obs-soundboard/releases/download/0.1.0/obs-soundboard-0.1.0-x86_64-linux-gnu.deb) |
+| Windows | `…-windows-x64-Installer.exe` (installer), or `…-windows-x64.zip` to extract into your OBS folder (`…-Portable.zip` for portable OBS) |
+| macOS (Apple Silicon and Intel) | `…-macos-universal.pkg` |
+| Ubuntu 24.04 (x86_64) | `…-x86_64-linux-gnu.deb` |
 
 The macOS package isn't signed by Apple: if macOS blocks it, right-click the `.pkg` and choose **Open**.
 
