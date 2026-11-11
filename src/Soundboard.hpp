@@ -59,6 +59,14 @@ private:
 	quint64 mainSeq = 0;
 	QElapsedTimer mainStarted;
 
+	/* The media bar follows the most recently started instance (main or voice) */
+	obs_source_t *barSource = nullptr; // compared only, never dereferenced
+	bool barVisible = true;
+	QString lastPlayedUuid;
+
+	void setBarSource(obs_source_t *target);
+	void applyBarVisibility();
+
 	int defaultClickAction = 0;     // SoundActionPlayAgain
 	int defaultLongPressAction = 2; // SoundActionStop
 
@@ -107,6 +115,7 @@ private slots:
 	void updateSystemAudioVolume();
 	void onMediaStopClicked();
 	void onMediaRestartClicked();
+	void onMediaReplayClicked();
 	void onMediaPauseClicked();
 	void onMediaPlayClicked();
 	void onMediaSeeked(int64_t timeMs);

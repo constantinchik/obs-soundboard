@@ -6,13 +6,15 @@ class SceneTree;
 
 /* Paints sounds as icon-centric tiles when the list is in grid mode:
  * the leading emoji of the name is drawn large, the rest of the name below it.
- * The tile that is currently playing is outlined and fills up with progress. */
+ * A playing tile is outlined; every running instance of the sound (clicking it
+ * again stacks another one) sweeps its own progress fill and playhead line, newer
+ * ones layered on top of older ones. */
 class SoundTileDelegate : public QStyledItemDelegate {
 	Q_OBJECT
 
 public:
 	enum Role {
-		ProgressRole = Qt::UserRole + 1, // double 0..1
+		ProgressRole = Qt::UserRole + 1, // QVariantList of double 0..1, oldest instance first
 		PlayingRole = Qt::UserRole + 2,  // bool
 		OverrideRole = Qt::UserRole + 3, // bool: tile overrides the default click/long-press action
 	};

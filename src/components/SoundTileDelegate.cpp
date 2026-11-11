@@ -116,7 +116,7 @@ void SoundTileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 	const bool selected = option.state.testFlag(QStyle::State_Selected);
 	const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
 	const bool playing = index.data(PlayingRole).toBool();
-	const double progress = qBound(0.0, index.data(ProgressRole).toDouble(), 1.0);
+	const QVariantList progresses = index.data(ProgressRole).toList();
 
 	QRectF tile = QRectF(option.rect).adjusted(tileMargin, tileMargin, -tileMargin, -tileMargin);
 	QPainterPath shape;
@@ -127,16 +127,32 @@ void SoundTileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 	bg.setAlphaF(hovered ? 0.13f : 0.06f);
 	painter->fillPath(shape, bg);
 
-	/* Playback progress */
-	if (playing && progress > 0.0) {
-		QRectF fill = tile;
-		fill.setWidth(tile.width() * progress);
-		QColor fillColor = accent;
-		fillColor.setAlphaF(0.40f);
+	/* Playback progress: one translucent fill per running instance, oldest first,
+	 * so each newer (shorter) sweep shows up darker on top of the older ones,
+	 * and a playhead line at the edge of each, the newest one the strongest. */
+	if (playing && !progresses.isEmpty()) {
+		const qsizetype count = progresses.size();
+		const float fillAlpha = count == 1 ? 0.40f : 0.28f;
 
 		painter->save();
 		painter->setClipPath(shape);
-		painter->fillRect(fill, fillColor);
+
+		for (qsizetype i = 0; i < count; i++) {
+			const double progress = qBound(0.0, progresses[i].toDouble(), 1.0);
+			const bool newest = i == count - 1;
+			const qreal x = tile.left() + tile.width() * progress;
+
+			QColor fillColor = accent;
+			fillColor.setAlphaF(fillAlpha);
+			painter->fillRect(QRectF(tile.left(), tile.top(), x - tile.left(), tile.height()), fillColor);
+
+			if (count > 1 && progress > 0.0) {
+				QColor line = accent;
+				line.setAlphaF(newest ? 1.0f : 0.6f);
+				painter->fillRect(QRectF(x - 1.0, tile.top(), 2.0, tile.height()), line);
+			}
+		}
+
 		painter->restore();
 	}
 

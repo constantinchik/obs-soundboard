@@ -64,6 +64,8 @@ private slots:
 	void MoveSliderFoward(int seconds = 5);
 	void MoveSliderBackwards(int seconds = 5);
 
+	void SetStopButtonPlaying(bool playing);
+
 	void UpdateSlideCounter();
 	void UpdateLabels(int val);
 
@@ -74,6 +76,7 @@ public slots:
 signals:
 	void stopClicked();
 	void restartClicked();
+	void replayClicked(); // the stop button, shown as "play" while idle
 	void pauseClicked();
 	void playClicked();
 	void seeked(int64_t timeMs);

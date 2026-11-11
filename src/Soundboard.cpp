@@ -32,6 +32,8 @@
 #include <QObject>
 #include <QToolButton>
 
+#include <algorithm>
+
 #include "moc_Soundboard.cpp"
 
 #define QT_UTF8(str) QString::fromUtf8(str, -1)
@@ -126,6 +128,7 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	// Connect media control signals for system audio
 	connect(ui->mediaControls, &MediaControls::stopClicked, this, &Soundboard::onMediaStopClicked);
 	connect(ui->mediaControls, &MediaControls::restartClicked, this, &Soundboard::onMediaRestartClicked);
+	connect(ui->mediaControls, &MediaControls::replayClicked, this, &Soundboard::onMediaReplayClicked);
 	connect(ui->mediaControls, &MediaControls::pauseClicked, this, &Soundboard::onMediaPauseClicked);
 	connect(ui->mediaControls, &MediaControls::playClicked, this, &Soundboard::onMediaPlayClicked);
 	connect(ui->mediaControls, &MediaControls::seeked, this, &Soundboard::onMediaSeeked);
@@ -168,7 +171,7 @@ void Soundboard::createSource()
 		source = obs_source_create("ffmpeg_source", obs_module_text("Soundboard"), nullptr, nullptr);
 		obs_source_set_hidden(source, true);
 
-		ui->mediaControls->SetSource(source.Get());
+		setBarSource(source.Get());
 	}
 
 	// Connect to volume changes for real-time system audio sync
@@ -214,10 +217,24 @@ void Soundboard::updateSystemAudioVolume()
 void Soundboard::onMediaStopClicked()
 {
 	// The bar's stop button stops everything, including overlapping voices
+	// (the bar may be showing a voice, so stop the main source explicitly too)
+	if (!obs_obj_invalid(source))
+		obs_source_media_stop(source);
 	SystemAudio::instance()->stop();
 	stopAllVoices();
 	currentPlayingMedia = nullptr;
 	updatePlayingTile();
+}
+
+void Soundboard::onMediaReplayClicked()
+{
+	// The bar's play button (shown while idle) plays the last sound again
+	MediaObj *obj = lastPlayedUuid.isEmpty() ? nullptr : MediaObj::findByUUID(lastPlayedUuid);
+	if (!obj)
+		obj = getCurrentMediaObj();
+
+	if (obj)
+		playNew(obj);
 }
 
 void Soundboard::onMediaRestartClicked()
@@ -255,7 +272,8 @@ void Soundboard::onMediaPlayClicked()
 
 void Soundboard::onMediaSeeked(int64_t timeMs)
 {
-	if (!systemAudioEnabled || !currentPlayingMedia)
+	// Seeking an overlapping voice from the bar only moves its OBS output
+	if (!systemAudioEnabled || !currentPlayingMedia || barSource != source.Get())
 		return;
 
 	// NSSound and other backends may not handle seeking while paused correctly
@@ -351,6 +369,7 @@ void Soundboard::save(OBSData saveData)
 	obs_data_set_bool(saveData, "system_audio_enabled", systemAudioEnabled);
 	obs_data_set_int(saveData, "default_click_action", defaultClickAction);
 	obs_data_set_int(saveData, "default_long_press_action", defaultLongPressAction);
+	obs_data_set_bool(saveData, "show_media_bar", barVisible);
 }
 
 void Soundboard::loadSource(OBSData saveData)
@@ -365,7 +384,7 @@ void Soundboard::loadSource(OBSData saveData)
 		if (obs_obj_invalid(source))
 			return;
 
-		ui->mediaControls->SetSource(source.Get());
+		setBarSource(source.Get());
 	}
 }
 
@@ -405,6 +424,10 @@ void Soundboard::load(OBSData saveData)
 	bool grid = obs_data_get_bool(saveData, "grid_mode");
 	ui->list->SetGridMode(grid);
 
+	obs_data_set_default_bool(saveData, "show_media_bar", true);
+	barVisible = obs_data_get_bool(saveData, "show_media_bar");
+	applyBarVisibility();
+
 	QString lastSound = obs_data_get_string(saveData, "current_sound");
 
 	if (!lastSound.isEmpty()) {
@@ -439,7 +462,7 @@ void Soundboard::setSystemAudioEnabled(bool enabled)
 void Soundboard::clear()
 {
 	ui->mediaControls->countDownTimer = false;
-	ui->mediaControls->SetSource(nullptr);
+	setBarSource(nullptr);
 	volumeSignal.Disconnect();
 	source = nullptr;
 
@@ -607,12 +630,17 @@ void Soundboard::spawnVoice(MediaObj *obj)
 	voice->seq = ++playSeq;
 	voice->started.start();
 	voices.push_back(std::move(voice));
+	lastPlayedUuid = obj->getUUID();
 
 	startProgressTracking();
 }
 
 void Soundboard::releaseVoice(Voice &voice)
 {
+	// Detach the media bar (and its signal connections) before the source goes away
+	if (barSource && barSource == voice.source.Get())
+		setBarSource(source.Get());
+
 	if (voice.channel >= 0) {
 		OBSSourceAutoRelease current = obs_get_output_source((uint32_t)voice.channel);
 		if (current.Get() == voice.source.Get())
@@ -882,40 +910,67 @@ void Soundboard::updatePlayingTile()
 	const bool mainBusy = isMainBusy();
 	const QString mainUuid = (mainBusy && currentPlayingMedia) ? currentPlayingMedia->getUUID() : QString();
 
+	// Every running instance, oldest first; the newest one drives the media bar
+	struct Instance {
+		QString uuid;
+		obs_source_t *src;
+		quint64 seq;
+	};
+	std::vector<Instance> instances;
+
+	if (mainBusy)
+		instances.push_back({mainUuid, source.Get(), mainSeq});
+	for (auto &voice : voices)
+		instances.push_back({voice->uuid, voice->source.Get(), voice->seq});
+
+	std::sort(instances.begin(), instances.end(),
+		  [](const Instance &a, const Instance &b) { return a.seq < b.seq; });
+
 	for (int i = 0; i < ui->list->count(); i++) {
 		QListWidgetItem *item = ui->list->item(i);
 		QString uuid = item->data(Qt::UserRole).toString();
 
-		// Show the most recently started instance of this sound
-		obs_source_t *latest = nullptr;
-		quint64 latestSeq = 0;
-		bool isPlaying = false;
-
-		if (mainBusy && uuid == mainUuid) {
-			latest = source;
-			latestSeq = mainSeq;
-			isPlaying = true;
+		QVariantList progresses;
+		for (const Instance &inst : instances) {
+			if (inst.uuid == uuid)
+				progresses << sourceProgress(inst.src);
 		}
 
-		for (auto &voice : voices) {
-			if (voice->uuid == uuid && voice->seq >= latestSeq) {
-				latest = voice->source;
-				latestSeq = voice->seq;
-				isPlaying = true;
-			}
-		}
-
-		double itemProgress = (isPlaying && latest) ? sourceProgress(latest) : 0.0;
+		bool isPlaying = !progresses.isEmpty();
 
 		if (item->data(SoundTileDelegate::PlayingRole).toBool() != isPlaying)
 			item->setData(SoundTileDelegate::PlayingRole, isPlaying);
 
-		if (item->data(SoundTileDelegate::ProgressRole).toDouble() != itemProgress)
-			item->setData(SoundTileDelegate::ProgressRole, itemProgress);
+		if (item->data(SoundTileDelegate::ProgressRole).toList() != progresses)
+			item->setData(SoundTileDelegate::ProgressRole, progresses);
 	}
+
+	setBarSource(instances.empty() ? source.Get() : instances.back().src);
 
 	if (!mainBusy && voices.empty())
 		progressTimer.stop();
+}
+
+void Soundboard::setBarSource(obs_source_t *target)
+{
+	if (target == barSource)
+		return;
+
+	barSource = target;
+	ui->mediaControls->SetSource(target);
+	applyBarVisibility();
+}
+
+void Soundboard::applyBarVisibility()
+{
+	// MediaControls shows itself whenever its source changes, so reapply this after
+	if (barVisible)
+		ui->mediaControls->RefreshControls();
+	else
+		ui->mediaControls->hide();
+
+	ui->monitorButton->setVisible(barVisible);
+	ui->addButton->setVisible(barVisible);
 }
 
 void Soundboard::play(MediaObj *obj)
@@ -925,6 +980,7 @@ void Soundboard::play(MediaObj *obj)
 
 	QString path = obj->getPath();
 	currentPlayingMedia = obj;
+	lastPlayedUuid = obj->getUUID();
 	mainSeq = ++playSeq;
 	mainStarted.start();
 	startProgressTracking();
@@ -1171,6 +1227,13 @@ void Soundboard::on_list_customContextMenuRequested(const QPoint &pos)
 		listAction->setChecked(true);
 
 	popup.addMenu(&subMenu);
+
+	QAction *barAction = popup.addAction(QTStr("ShowMediaBar"), this, [this](bool checked) {
+		barVisible = checked;
+		applyBarVisibility();
+	});
+	barAction->setCheckable(true);
+	barAction->setChecked(barVisible);
 
 	// Soundboard-wide defaults; tiles can override them in their properties
 	const int actions[] = {SoundActionPlayAgain, SoundActionRestart, SoundActionStop};
