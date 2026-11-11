@@ -29,6 +29,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QObject>
+#include <QToolButton>
 
 #include "moc_Soundboard.cpp"
 
@@ -89,20 +90,20 @@ void onEvent(enum obs_frontend_event event, void *data)
 Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 {
 	ui->setupUi(this);
+	ui->list->SetGridItemWidth(104);
+	ui->list->SetGridItemHeight(78);
 	ui->list->SetGridMode(true);
-
-	for (QAction *x : ui->toolbar->actions()) {
-		QWidget *temp = ui->toolbar->widgetForAction(x);
-
-		for (QByteArray &y : x->dynamicPropertyNames()) {
-			temp->setProperty(y, x->property(y));
-		}
-	}
+	ui->list->SetPlaceholderText(QTStr("EmptySoundboard"));
 
 	obs_frontend_add_event_callback(onEvent, this);
 	obs_frontend_add_save_callback(onSave, this);
 
 	ui->list->setItemDelegate(new MediaRenameDelegate(ui->list));
+
+	progressTimer.setInterval(50);
+	connect(&progressTimer, &QTimer::timeout, this, &Soundboard::updatePlayingTile);
+
+	connect(ui->addButton, &QToolButton::clicked, ui->actionAdd, &QAction::trigger);
 
 	renameMedia = new QAction(MainStr("Rename"), this);
 	renameMedia->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -124,7 +125,7 @@ Soundboard::Soundboard(QWidget *parent) : QWidget(parent), ui(new Ui_Soundboard)
 	connect(ui->mediaControls, &MediaControls::pauseClicked, this, &Soundboard::onMediaPauseClicked);
 	connect(ui->mediaControls, &MediaControls::playClicked, this, &Soundboard::onMediaPlayClicked);
 	connect(ui->mediaControls, &MediaControls::seeked, this, &Soundboard::onMediaSeeked);
-	connect(ui->systemAudioCheckbox, &QCheckBox::toggled, this, &Soundboard::onSystemAudioToggled);
+	connect(ui->monitorButton, &QToolButton::toggled, this, &Soundboard::onSystemAudioToggled);
 }
 
 Soundboard::~Soundboard()
@@ -199,10 +200,13 @@ void Soundboard::onMediaStopClicked()
 {
 	SystemAudio::instance()->stop();
 	currentPlayingMedia = nullptr;
+	updatePlayingTile();
 }
 
 void Soundboard::onMediaRestartClicked()
 {
+	startProgressTracking();
+
 	if (!systemAudioEnabled || !currentPlayingMedia)
 		return;
 
@@ -224,6 +228,8 @@ void Soundboard::onMediaPauseClicked()
 
 void Soundboard::onMediaPlayClicked()
 {
+	startProgressTracking();
+
 	if (!systemAudioEnabled)
 		return;
 
@@ -384,11 +390,18 @@ void Soundboard::load(OBSData saveData)
 	bool countdown = obs_data_get_bool(saveData, "use_countdown");
 	ui->mediaControls->countDownTimer = countdown;
 
-	systemAudioEnabled = obs_data_get_bool(saveData, "system_audio_enabled");
-	// Checkbox uses indicator-mute: checked = mute icon, unchecked = speaker icon
-	// Invert: when audio enabled, checkbox unchecked (shows speaker), when disabled, checked (shows mute)
-	ui->systemAudioCheckbox->setChecked(!systemAudioEnabled);
-	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
+	setSystemAudioEnabled(obs_data_get_bool(saveData, "system_audio_enabled"));
+}
+
+void Soundboard::setSystemAudioEnabled(bool enabled)
+{
+	systemAudioEnabled = enabled;
+
+	// Checked = sounds also play through your own output (monitoring on)
+	QSignalBlocker blocker(ui->monitorButton);
+	ui->monitorButton->setChecked(enabled);
+	ui->monitorButton->setText(enabled ? QStringLiteral("🎧") : QStringLiteral("🔇"));
+	ui->monitorButton->setToolTip(enabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
 }
 
 void Soundboard::clear()
@@ -399,10 +412,9 @@ void Soundboard::clear()
 	source = nullptr;
 
 	SystemAudio::instance()->stop();
-	systemAudioEnabled = false;
+	setSystemAudioEnabled(false);
 	currentPlayingMedia = nullptr;
-	ui->systemAudioCheckbox->setChecked(true); // Checked = mute icon = audio disabled
-	ui->systemAudioCheckbox->setToolTip(QTStr("SystemAudioOff"));
+	progressTimer.stop();
 
 	prevPath = "";
 
@@ -420,10 +432,67 @@ void Soundboard::clear()
 	updateActions();
 }
 
+void Soundboard::startProgressTracking()
+{
+	playStarted.start();
+
+	if (!progressTimer.isActive())
+		progressTimer.start();
+
+	updatePlayingTile();
+}
+
+void Soundboard::updatePlayingTile()
+{
+	QListWidgetItem *playingItem = nullptr;
+	double progress = 0.0;
+	bool active = false;
+
+	if (currentPlayingMedia && !obs_obj_invalid(source)) {
+		obs_media_state state = obs_source_media_get_state(source);
+
+		active = state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED ||
+			 state == OBS_MEDIA_STATE_OPENING || state == OBS_MEDIA_STATE_BUFFERING;
+
+		// Right after a click the source may not have started yet
+		if (!active && playStarted.isValid() && playStarted.elapsed() < 1000)
+			active = true;
+
+		if (active) {
+			playingItem = findItem(currentPlayingMedia);
+
+			int64_t duration = obs_source_media_get_duration(source);
+			int64_t time = obs_source_media_get_time(source);
+
+			if (duration > 0 && (state == OBS_MEDIA_STATE_PLAYING || state == OBS_MEDIA_STATE_PAUSED))
+				progress = (double)time / (double)duration;
+		}
+	}
+
+	for (int i = 0; i < ui->list->count(); i++) {
+		QListWidgetItem *item = ui->list->item(i);
+		bool isPlaying = item == playingItem;
+		double itemProgress = isPlaying ? progress : 0.0;
+
+		if (item->data(SoundTileDelegate::PlayingRole).toBool() != isPlaying)
+			item->setData(SoundTileDelegate::PlayingRole, isPlaying);
+
+		if (item->data(SoundTileDelegate::ProgressRole).toDouble() != itemProgress)
+			item->setData(SoundTileDelegate::ProgressRole, itemProgress);
+	}
+
+	if (!active)
+		progressTimer.stop();
+}
+
 void Soundboard::play(MediaObj *obj)
 {
+	if (!obj)
+		return;
+
 	QString path = obj->getPath();
 	currentPlayingMedia = obj;
+	startProgressTracking();
 
 	// Calculate combined volume: per-sound volume × source mixer volume
 	float soundVolume = obj->getVolume();
@@ -457,9 +526,7 @@ void Soundboard::play(MediaObj *obj)
 
 void Soundboard::onSystemAudioToggled(bool checked)
 {
-	// Invert: checked = mute icon = audio disabled, unchecked = speaker icon = audio enabled
-	systemAudioEnabled = !checked;
-	ui->systemAudioCheckbox->setToolTip(systemAudioEnabled ? QTStr("SystemAudioOn") : QTStr("SystemAudioOff"));
+	setSystemAudioEnabled(checked);
 
 	if (!systemAudioEnabled) {
 		SystemAudio::instance()->stop();
@@ -485,8 +552,10 @@ void Soundboard::itemRenamed(MediaObj *obj)
 {
 	QListWidgetItem *item = findItem(obj);
 
-	if (item)
+	if (item) {
 		item->setText(obj->getName());
+		item->setToolTip(obj->getName());
+	}
 }
 
 MediaObj *Soundboard::add(const QString &name_, const QString &path)
@@ -497,6 +566,7 @@ MediaObj *Soundboard::add(const QString &name_, const QString &path)
 
 	QListWidgetItem *item = new QListWidgetItem(name);
 	item->setData(Qt::UserRole, obj->getUUID());
+	item->setToolTip(name);
 	ui->list->addItem(item);
 	ui->list->setCurrentItem(item);
 
@@ -571,16 +641,6 @@ void Soundboard::updateActions()
 	ui->actionRemove->setEnabled(enable);
 	ui->actionEdit->setEnabled(enable);
 
-	for (QAction *action : ui->toolbar->actions()) {
-		QWidget *widget = ui->toolbar->widgetForAction(action);
-
-		if (!widget)
-			continue;
-
-		widget->style()->unpolish(widget);
-		widget->style()->polish(widget);
-	}
-
 	actionsEnabled = enable;
 }
 
@@ -599,6 +659,9 @@ void Soundboard::on_actionRemove_triggered()
 
 	if (reply == QMessageBox::No)
 		return;
+
+	if (obj == currentPlayingMedia)
+		currentPlayingMedia = nullptr;
 
 	QListWidgetItem *item = findItem(obj);
 	delete ui->list->takeItem(ui->list->row(item));
@@ -749,7 +812,7 @@ void Soundboard::mediaNameEdited(QWidget *editor)
 	obj->setName(name);
 }
 
-MediaRenameDelegate::MediaRenameDelegate(QObject *parent) : QStyledItemDelegate(parent) {}
+MediaRenameDelegate::MediaRenameDelegate(SceneTree *parent) : SoundTileDelegate(parent) {}
 
 void MediaRenameDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {
@@ -776,7 +839,7 @@ bool MediaRenameDelegate::eventFilter(QObject *editor, QEvent *event)
 		}
 	}
 
-	return QStyledItemDelegate::eventFilter(editor, event);
+	return SoundTileDelegate::eventFilter(editor, event);
 }
 
 OBS_DECLARE_MODULE()

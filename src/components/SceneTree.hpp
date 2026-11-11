@@ -13,6 +13,7 @@ class SceneTree : public QListWidget {
 	bool gridMode = false;
 	int maxWidth = 150;
 	int itemHeight = 24;
+	QString placeholderText;
 
 public:
 	void SetGridMode(bool grid);
@@ -23,6 +24,8 @@ public:
 	int GetGridItemWidth();
 	int GetGridItemHeight();
 
+	void SetPlaceholderText(const QString &text);
+
 	explicit SceneTree(QWidget *parent = nullptr);
 
 private:
@@ -31,6 +34,7 @@ private:
 protected:
 	virtual bool eventFilter(QObject *obj, QEvent *event) override;
 	virtual void resizeEvent(QResizeEvent *event) override;
+	virtual void paintEvent(QPaintEvent *event) override;
 	virtual void startDrag(Qt::DropActions supportedActions) override;
 	virtual void dropEvent(QDropEvent *event) override;
 	virtual void dragMoveEvent(QDragMoveEvent *event) override;

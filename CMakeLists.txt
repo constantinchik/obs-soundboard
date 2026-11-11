@@ -43,6 +43,8 @@ target_sources(
     src/components/ClickableLabel.hpp
     src/components/SceneTree.cpp
     src/components/SceneTree.hpp
+    src/components/SoundTileDelegate.cpp
+    src/components/SoundTileDelegate.hpp
     src/components/SliderIgnorewheel.hpp
     src/components/SliderIgnorewheel.cpp
     src/components/MediaControls.cpp

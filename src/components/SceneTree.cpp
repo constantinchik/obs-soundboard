@@ -1,5 +1,6 @@
 #include "SceneTree.hpp"
 
+#include <QPainter>
 #include <QScrollBar>
 #include <QTimer>
 
@@ -10,6 +11,29 @@ SceneTree::SceneTree(QWidget *parent_) : QListWidget(parent_)
 	installEventFilter(this);
 	setDragDropMode(InternalMove);
 	setMovement(QListView::Snap);
+	setMouseTracking(true);
+	viewport()->setAttribute(Qt::WA_Hover, true);
+}
+
+void SceneTree::SetPlaceholderText(const QString &text)
+{
+	placeholderText = text;
+	viewport()->update();
+}
+
+void SceneTree::paintEvent(QPaintEvent *event)
+{
+	QListWidget::paintEvent(event);
+
+	if (count() > 0 || placeholderText.isEmpty())
+		return;
+
+	QPainter painter(viewport());
+	QColor color = palette().color(QPalette::Text);
+	color.setAlphaF(0.5f);
+	painter.setPen(color);
+	painter.drawText(viewport()->rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap,
+			 placeholderText);
 }
 
 void SceneTree::SetGridMode(bool grid)

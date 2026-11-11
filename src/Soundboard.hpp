@@ -4,8 +4,11 @@
 
 #include <obs.hpp>
 
+#include <QElapsedTimer>
 #include <QPointer>
-#include <QStyledItemDelegate>
+#include <QTimer>
+
+#include "components/SoundTileDelegate.hpp"
 
 #include <memory>
 
@@ -34,9 +37,16 @@ private:
 
 	QAction *renameMedia = nullptr;
 
+	QTimer progressTimer;
+	QElapsedTimer playStarted;
+
 	static void onVolumeChanged(void *data, calldata_t *cd);
 
+	void startProgressTracking();
+	void setSystemAudioEnabled(bool enabled);
+
 private slots:
+	void updatePlayingTile();
 	void updateSystemAudioVolume();
 	void onMediaStopClicked();
 	void onMediaRestartClicked();
@@ -81,11 +91,11 @@ protected:
 	virtual void dropEvent(QDropEvent *event) override;
 };
 
-class MediaRenameDelegate : public QStyledItemDelegate {
+class MediaRenameDelegate : public SoundTileDelegate {
 	Q_OBJECT
 
 public:
-	MediaRenameDelegate(QObject *parent);
+	MediaRenameDelegate(SceneTree *parent);
 	virtual void setEditorData(QWidget *editor, const QModelIndex &index) const override;
 
 protected:

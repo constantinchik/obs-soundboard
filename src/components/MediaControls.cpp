@@ -236,8 +236,8 @@ void MediaControls::SetRestartState()
 	ui->slider->setValue(0);
 
 	if (!isSlideshow) {
-		ui->timerLabel->setText("--:--:--");
-		ui->durationLabel->setText("--:--:--");
+		ui->timerLabel->setText("-:--");
+		ui->durationLabel->setText("-:--");
 	} else {
 		ui->timerLabel->setText("-");
 		ui->durationLabel->setText("-");
@@ -358,7 +358,10 @@ QString MediaControls::FormatSeconds(int totalSeconds)
 	int minutes = totalMinutes % 60;
 	int hours = totalMinutes / 60;
 
-	return QString::asprintf("%02d:%02d:%02d", hours, minutes, seconds);
+	if (hours > 0)
+		return QString::asprintf("%d:%02d:%02d", hours, minutes, seconds);
+
+	return QString::asprintf("%d:%02d", minutes, seconds);
 }
 
 void MediaControls::on_playPauseButton_clicked()
