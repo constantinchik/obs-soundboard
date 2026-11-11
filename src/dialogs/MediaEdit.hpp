@@ -11,9 +11,13 @@ class MediaEdit : public QDialog {
 
 private:
 	QString origText;
+	bool nameTouched = false; // the user typed a name; don't overwrite it from the file
 	std::unique_ptr<Ui_MediaEdit> ui;
 
+	QString uniqueName(const QString &base);
+
 private slots:
+	void updateFileState();
 	void on_browseButton_clicked();
 	void on_buttonBox_clicked(QAbstractButton *button);
 
