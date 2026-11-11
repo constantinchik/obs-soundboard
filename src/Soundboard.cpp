@@ -1092,7 +1092,7 @@ void Soundboard::on_actionAdd_triggered()
 
 	connect(&edit, &QDialog::accepted, this, added);
 
-	edit.setName(getDefaultString());
+	// The name stays empty until a file is chosen; the dialog fills it from the file name
 	edit.setDefaultActions(defaultClickAction, defaultLongPressAction);
 	edit.exec();
 }

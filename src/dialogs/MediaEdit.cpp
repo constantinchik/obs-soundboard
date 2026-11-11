@@ -7,7 +7,10 @@
 #include "models/MediaData.hpp"
 
 #include <QComboBox>
+#include <QDialogButtonBox>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QFileDialog>
 #include <QStandardPaths>
 
@@ -21,6 +24,36 @@ MediaEdit::MediaEdit(QWidget *parent) : QDialog(parent), ui(new Ui_MediaEdit)
 	obs_frontend_push_ui_translation(obs_module_get_string);
 	ui->setupUi(this);
 	obs_frontend_pop_ui_translation();
+
+	connect(ui->name, &QLineEdit::textEdited, this, [this]() { nameTouched = true; });
+	connect(ui->name, &QLineEdit::textChanged, this, &MediaEdit::updateFileState);
+	connect(ui->path, &QLineEdit::textChanged, this, &MediaEdit::updateFileState);
+
+	ui->browseButton->setFocus();
+	updateFileState();
+}
+
+void MediaEdit::updateFileState()
+{
+	// Nothing to name or save until a file is chosen
+	const bool hasFile = !ui->path->text().isEmpty();
+	ui->name->setEnabled(hasFile);
+
+	QPushButton *ok = ui->buttonBox->button(QDialogButtonBox::Ok);
+	if (ok)
+		ok->setEnabled(hasFile && !ui->name->text().trimmed().isEmpty());
+}
+
+QString MediaEdit::uniqueName(const QString &base)
+{
+	if (base == origText || !MediaObj::findByName(base))
+		return base;
+
+	for (int i = 2;; i++) {
+		QString candidate = base + " " + QString::number(i);
+		if (!MediaObj::findByName(candidate))
+			return candidate;
+	}
 }
 
 MediaEdit::~MediaEdit() {}
@@ -126,8 +159,15 @@ void MediaEdit::on_browseButton_clicked()
 	QString fileName = QFileDialog::getOpenFileName(this, QTStr("OpenAudioFile"), folder,
 							("Audio (*.mp3 *.aac *.ogg *.wav *.flac)"));
 
-	if (!fileName.isEmpty())
-		ui->path->setText(fileName);
+	if (fileName.isEmpty())
+		return;
+
+	ui->path->setText(fileName);
+
+	// A new sound takes its name from the file until the user types one;
+	// editing an existing sound keeps its name
+	if (origText.isEmpty() && !nameTouched)
+		ui->name->setText(uniqueName(QFileInfo(fileName).completeBaseName()));
 }
 
 void MediaEdit::on_buttonBox_clicked(QAbstractButton *button)
