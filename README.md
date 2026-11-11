@@ -2,6 +2,8 @@
 
 OBS Studio plugin that adds a soundboard dock, so you can trigger sounds while streaming or recording.
 
+![Soundboard dock in OBS Studio: sound tiles, with "wow" clicked several times so its copies play stacked](docs/assets/soundboard-dock.png)
+
 ## Download
 
 Download the plugin from the **[Releases page](https://github.com/constantinchik/obs-soundboard/releases/latest)**. Each release has a package for every platform:
