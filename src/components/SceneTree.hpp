@@ -7,8 +7,9 @@
 
 class SceneTree : public QListWidget {
 	Q_OBJECT
-	Q_PROPERTY(int gridItemWidth READ GetGridItemWidth WRITE SetGridItemWidth DESIGNABLE true)
-	Q_PROPERTY(int gridItemHeight READ GetGridItemHeight WRITE SetGridItemHeight DESIGNABLE true)
+	/* No gridItemWidth/gridItemHeight Q_PROPERTYs on purpose: OBS themes set
+	 * qproperty-gridItemHeight on every "SceneTree" (meant for the Scenes dock),
+	 * which would squash the soundboard tiles back to 24px. */
 
 	bool gridMode = false;
 	int maxWidth = 150;

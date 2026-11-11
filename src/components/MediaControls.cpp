@@ -50,6 +50,10 @@ MediaControls::MediaControls(QWidget *parent) : QWidget(parent), ui(new Ui::Medi
 	ui->setupUi(this);
 	setFocusPolicy(Qt::StrongFocus);
 
+	// OBS themes pad QPushButtons wide; keep the media buttons compact
+	for (QWidget *button : {ui->playPauseButton, ui->previousButton, ui->stopButton, ui->nextButton})
+		button->setMaximumWidth(30);
+
 	connect(&mediaTimer, &QTimer::timeout, this, &MediaControls::SetSliderPosition);
 	connect(&seekTimer, &QTimer::timeout, this, &MediaControls::SeekTimerCallback);
 	connect(ui->slider, &AbsoluteSlider::sliderPressed, this, &MediaControls::AbsoluteSliderClicked);

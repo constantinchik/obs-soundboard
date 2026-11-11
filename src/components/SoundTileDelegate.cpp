@@ -16,19 +16,20 @@ constexpr qreal tileMargin = 3.0;
 constexpr qreal tileRadius = 6.0;
 constexpr int maxLabelLines = 2;
 
-/* Lays the text out in at most maxLines lines of the given width, eliding the last one. */
-QString wrapAndElide(const QString &text, const QFont &font, qreal width, int maxLines)
+/* Wraps the text at word boundaries into at most maxLines lines of the given width.
+ * A word too long for a line, and whatever doesn't fit in the last line, gets "…". */
+QStringList wrapAndElide(const QString &text, const QFont &font, qreal width, int maxLines)
 {
-	if (text.isEmpty() || width <= 0)
-		return QString();
+	QStringList lines;
+	if (text.isEmpty() || width <= 0 || maxLines < 1)
+		return lines;
 
 	QFontMetrics fm(font);
 	QTextLayout layout(text, font);
 	QTextOption opt;
-	opt.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+	opt.setWrapMode(QTextOption::WordWrap);
 	layout.setTextOption(opt);
 
-	QStringList lines;
 	layout.beginLayout();
 
 	for (;;) {
@@ -38,17 +39,29 @@ QString wrapAndElide(const QString &text, const QFont &font, qreal width, int ma
 
 		line.setLineWidth(width);
 
-		if (lines.size() == maxLines - 1) {
-			QString rest = text.mid(line.textStart()).trimmed();
-			lines << fm.elidedText(rest, Qt::ElideRight, (int)width);
-			break;
-		}
+		QString lineText = (lines.size() == maxLines - 1) ? text.mid(line.textStart())
+								  : text.mid(line.textStart(), line.textLength());
+		lines << fm.elidedText(lineText.trimmed(), Qt::ElideRight, (int)width);
 
-		lines << text.mid(line.textStart(), line.textLength()).trimmed();
+		if (lines.size() == maxLines)
+			break;
 	}
 
 	layout.endLayout();
-	return lines.join(QLatin1Char('\n'));
+	return lines;
+}
+
+/* "StopTheCap.mp3" -> "StopTheCap": names made by dropping files keep the extension */
+QString stripAudioExtension(const QString &label)
+{
+	static const char *exts[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".opus"};
+
+	for (const char *ext : exts) {
+		if (label.endsWith(QLatin1String(ext), Qt::CaseInsensitive))
+			return label.left(label.size() - (qsizetype)strlen(ext)).trimmed();
+	}
+
+	return label;
 }
 
 } // namespace
@@ -157,15 +170,19 @@ void SoundTileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 	QString icon, label;
 	const bool emoji = splitName(index.data(Qt::DisplayRole).toString(), icon, label);
 
-	const qreal pad = 4.0;
-	QRectF iconRect(tile.left(), tile.top() + pad, tile.width(), tile.height() * 0.55 - pad);
-	QRectF labelRect(tile.left() + pad, iconRect.bottom() + 2.0, tile.width() - pad * 2.0,
-			 tile.bottom() - iconRect.bottom() - 2.0 - pad);
+	label = stripAudioExtension(label);
 
-	if (label.isEmpty()) {
-		/* Emoji-only name: let the icon use the whole tile */
-		iconRect = tile.adjusted(0, pad, 0, -pad);
-	}
+	/* Lay the label out first (one or two lines), then give the icon the rest */
+	const qreal pad = 4.0;
+	const QFont labelFont = option.font;
+	const QFontMetricsF labelMetrics(labelFont);
+	const qreal labelWidth = tile.width() - pad * 2.0;
+
+	QStringList lines = wrapAndElide(label, labelFont, labelWidth, maxLabelLines);
+	const qreal labelHeight = lines.size() * labelMetrics.lineSpacing();
+
+	QRectF iconRect(tile.left(), tile.top() + pad, tile.width(), tile.height() - pad * 2.0 - labelHeight);
+	QRectF labelRect(tile.left() + pad, iconRect.bottom(), labelWidth, labelHeight);
 
 	QFont iconFont = option.font;
 	iconFont.setPixelSize(qMax(12, (int)(qMin(iconRect.height(), 48.0) * (emoji ? 0.78 : 0.62))));
@@ -175,17 +192,14 @@ void SoundTileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 	painter->setPen(textColor);
 	painter->drawText(iconRect, Qt::AlignCenter, icon);
 
-	if (!label.isEmpty()) {
-		QFont labelFont = option.font;
-		QString text = wrapAndElide(label, labelFont, labelRect.width(), maxLabelLines);
-
+	if (!lines.isEmpty()) {
 		QColor labelColor = textColor;
 		if (!playing && !selected)
 			labelColor.setAlphaF(0.85f);
 
 		painter->setFont(labelFont);
 		painter->setPen(labelColor);
-		painter->drawText(labelRect, Qt::AlignHCenter | Qt::AlignTop, text);
+		painter->drawText(labelRect, Qt::AlignHCenter | Qt::AlignTop, lines.join(QLatin1Char('\n')));
 	}
 
 	painter->restore();
